@@ -1,8 +1,8 @@
-import torch
-import MinkowskiEngine as ME
 import sys
 
-from .common import NormType, get_norm
+import MinkowskiEngine as ME
+import torch
+
 
 class Seq(torch.nn.Sequential):
     def __init__(self):
@@ -13,7 +13,8 @@ class Seq(torch.nn.Sequential):
         self.add_module(str(self._num_modules), module)
         self._num_modules += 1
         return self
-        
+
+
 class ResBlock(ME.MinkowskiNetwork):
     """
     Basic ResNet type block
@@ -252,7 +253,15 @@ class ResNetDown(ME.MinkowskiNetwork):
     CONVOLUTION = ME.MinkowskiConvolution
 
     def __init__(
-        self, down_conv_nn=[], kernel_size=2, dilation=1, dimension=3, stride=2, N=1, block="ResBlock", **kwargs
+        self,
+        down_conv_nn=[],
+        kernel_size=2,
+        dilation=1,
+        dimension=3,
+        stride=2,
+        N=1,
+        block="ResBlock",
+        **kwargs
     ):
         block = getattr(_res_blocks, block)
         ME.MinkowskiNetwork.__init__(self, dimension)
@@ -281,7 +290,14 @@ class ResNetDown(ME.MinkowskiNetwork):
         if N > 0:
             self.blocks = Seq()
             for _ in range(N):
-                self.blocks.append(block(conv1_output, down_conv_nn[1], self.CONVOLUTION, dimension=dimension))
+                self.blocks.append(
+                    block(
+                        conv1_output,
+                        down_conv_nn[1],
+                        self.CONVOLUTION,
+                        dimension=dimension,
+                    )
+                )
                 conv1_output = down_conv_nn[1]
         else:
             self.blocks = None
@@ -300,7 +316,16 @@ class ResNetUp(ResNetDown):
 
     CONVOLUTION = ME.MinkowskiConvolutionTranspose
 
-    def __init__(self, up_conv_nn=[], kernel_size=2, dilation=1, dimension=3, stride=2, N=1, **kwargs):
+    def __init__(
+        self,
+        up_conv_nn=[],
+        kernel_size=2,
+        dilation=1,
+        dimension=3,
+        stride=2,
+        N=1,
+        **kwargs
+    ):
         super().__init__(
             down_conv_nn=up_conv_nn,
             kernel_size=kernel_size,

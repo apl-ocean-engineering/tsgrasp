@@ -16,7 +16,13 @@ class ResUNet2(ME.MinkowskiNetwork):
     # To use the model, must call initialize_coords before forward pass.
     # Once data is processed, call clear to reset the model before calling initialize_coords
     def __init__(
-        self, in_channels=3, out_channels=32, bn_momentum=0.01, normalize_feature=True, conv1_kernel_size=5, D=3
+        self,
+        in_channels=3,
+        out_channels=32,
+        bn_momentum=0.01,
+        normalize_feature=True,
+        conv1_kernel_size=5,
+        D=3,
     ):
         ME.MinkowskiNetwork.__init__(self, D)
         NORM_TYPE = self.NORM_TYPE
@@ -36,7 +42,9 @@ class ResUNet2(ME.MinkowskiNetwork):
         )
         self.norm1 = get_norm(NORM_TYPE, CHANNELS[1], bn_momentum=bn_momentum, D=D)
 
-        self.block1 = get_block(BLOCK_NORM_TYPE, CHANNELS[1], CHANNELS[1], bn_momentum=bn_momentum, D=D)
+        self.block1 = get_block(
+            BLOCK_NORM_TYPE, CHANNELS[1], CHANNELS[1], bn_momentum=bn_momentum, D=D
+        )
 
         self.conv2 = ME.MinkowskiConvolution(
             in_channels=CHANNELS[1],
@@ -49,7 +57,9 @@ class ResUNet2(ME.MinkowskiNetwork):
         )
         self.norm2 = get_norm(NORM_TYPE, CHANNELS[2], bn_momentum=bn_momentum, D=D)
 
-        self.block2 = get_block(BLOCK_NORM_TYPE, CHANNELS[2], CHANNELS[2], bn_momentum=bn_momentum, D=D)
+        self.block2 = get_block(
+            BLOCK_NORM_TYPE, CHANNELS[2], CHANNELS[2], bn_momentum=bn_momentum, D=D
+        )
 
         self.conv3 = ME.MinkowskiConvolution(
             in_channels=CHANNELS[2],
@@ -62,7 +72,9 @@ class ResUNet2(ME.MinkowskiNetwork):
         )
         self.norm3 = get_norm(NORM_TYPE, CHANNELS[3], bn_momentum=bn_momentum, D=D)
 
-        self.block3 = get_block(BLOCK_NORM_TYPE, CHANNELS[3], CHANNELS[3], bn_momentum=bn_momentum, D=D)
+        self.block3 = get_block(
+            BLOCK_NORM_TYPE, CHANNELS[3], CHANNELS[3], bn_momentum=bn_momentum, D=D
+        )
 
         self.conv4 = ME.MinkowskiConvolution(
             in_channels=CHANNELS[3],
@@ -75,7 +87,9 @@ class ResUNet2(ME.MinkowskiNetwork):
         )
         self.norm4 = get_norm(NORM_TYPE, CHANNELS[4], bn_momentum=bn_momentum, D=D)
 
-        self.block4 = get_block(BLOCK_NORM_TYPE, CHANNELS[4], CHANNELS[4], bn_momentum=bn_momentum, D=D)
+        self.block4 = get_block(
+            BLOCK_NORM_TYPE, CHANNELS[4], CHANNELS[4], bn_momentum=bn_momentum, D=D
+        )
 
         self.conv4_tr = ME.MinkowskiConvolutionTranspose(
             in_channels=CHANNELS[4],
@@ -86,9 +100,17 @@ class ResUNet2(ME.MinkowskiNetwork):
             bias=False,
             dimension=D,
         )
-        self.norm4_tr = get_norm(NORM_TYPE, TR_CHANNELS[4], bn_momentum=bn_momentum, D=D)
+        self.norm4_tr = get_norm(
+            NORM_TYPE, TR_CHANNELS[4], bn_momentum=bn_momentum, D=D
+        )
 
-        self.block4_tr = get_block(BLOCK_NORM_TYPE, TR_CHANNELS[4], TR_CHANNELS[4], bn_momentum=bn_momentum, D=D)
+        self.block4_tr = get_block(
+            BLOCK_NORM_TYPE,
+            TR_CHANNELS[4],
+            TR_CHANNELS[4],
+            bn_momentum=bn_momentum,
+            D=D,
+        )
 
         self.conv3_tr = ME.MinkowskiConvolutionTranspose(
             in_channels=CHANNELS[3] + TR_CHANNELS[4],
@@ -99,9 +121,17 @@ class ResUNet2(ME.MinkowskiNetwork):
             bias=False,
             dimension=D,
         )
-        self.norm3_tr = get_norm(NORM_TYPE, TR_CHANNELS[3], bn_momentum=bn_momentum, D=D)
+        self.norm3_tr = get_norm(
+            NORM_TYPE, TR_CHANNELS[3], bn_momentum=bn_momentum, D=D
+        )
 
-        self.block3_tr = get_block(BLOCK_NORM_TYPE, TR_CHANNELS[3], TR_CHANNELS[3], bn_momentum=bn_momentum, D=D)
+        self.block3_tr = get_block(
+            BLOCK_NORM_TYPE,
+            TR_CHANNELS[3],
+            TR_CHANNELS[3],
+            bn_momentum=bn_momentum,
+            D=D,
+        )
 
         self.conv2_tr = ME.MinkowskiConvolutionTranspose(
             in_channels=CHANNELS[2] + TR_CHANNELS[3],
@@ -112,9 +142,17 @@ class ResUNet2(ME.MinkowskiNetwork):
             bias=False,
             dimension=D,
         )
-        self.norm2_tr = get_norm(NORM_TYPE, TR_CHANNELS[2], bn_momentum=bn_momentum, D=D)
+        self.norm2_tr = get_norm(
+            NORM_TYPE, TR_CHANNELS[2], bn_momentum=bn_momentum, D=D
+        )
 
-        self.block2_tr = get_block(BLOCK_NORM_TYPE, TR_CHANNELS[2], TR_CHANNELS[2], bn_momentum=bn_momentum, D=D)
+        self.block2_tr = get_block(
+            BLOCK_NORM_TYPE,
+            TR_CHANNELS[2],
+            TR_CHANNELS[2],
+            bn_momentum=bn_momentum,
+            D=D,
+        )
 
         self.conv1_tr = ME.MinkowskiConvolution(
             in_channels=CHANNELS[1] + TR_CHANNELS[2],
@@ -249,8 +287,16 @@ class Res2BlockDown(ME.MinkowskiNetwork):
             bias=False,
             dimension=dimension,
         )
-        self.norm = get_norm(norm_type, down_conv_nn[1], bn_momentum=bn_momentum, D=dimension)
-        self.block = get_block(block_norm_type, down_conv_nn[1], down_conv_nn[1], bn_momentum=bn_momentum, D=dimension)
+        self.norm = get_norm(
+            norm_type, down_conv_nn[1], bn_momentum=bn_momentum, D=dimension
+        )
+        self.block = get_block(
+            block_norm_type,
+            down_conv_nn[1],
+            down_conv_nn[1],
+            bn_momentum=bn_momentum,
+            D=dimension,
+        )
 
     def forward(self, x):
 
@@ -299,8 +345,16 @@ class Res2BlockUp(ME.MinkowskiNetwork):
                 dimension=dimension,
             )
         else:
-            self.norm = get_norm(norm_type, up_conv_nn[1], bn_momentum=bn_momentum, D=dimension)
-            self.block = get_block(block_norm_type, up_conv_nn[1], up_conv_nn[1], bn_momentum=bn_momentum, D=dimension)
+            self.norm = get_norm(
+                norm_type, up_conv_nn[1], bn_momentum=bn_momentum, D=dimension
+            )
+            self.block = get_block(
+                block_norm_type,
+                up_conv_nn[1],
+                up_conv_nn[1],
+                bn_momentum=bn_momentum,
+                D=dimension,
+            )
             self.final = None
 
     def forward(self, x, x_skip):

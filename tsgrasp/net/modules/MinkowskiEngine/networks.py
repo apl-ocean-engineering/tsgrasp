@@ -1,14 +1,15 @@
 import torch.nn as nn
+from typing import Any, Optional, Tuple
 
 import MinkowskiEngine as ME
 from .modules import BasicBlock, Bottleneck
 
 
 class ResNetBase(nn.Module):
-    BLOCK = None
-    LAYERS = ()
+    BLOCK: Optional[Any] = None
+    LAYERS: Tuple[int, ...] = ()
     INIT_DIM = 64
-    PLANES = (64, 128, 256, 512)
+    PLANES: Optional[Tuple[int, ...]] = (64, 128, 256, 512)
 
     def __init__(self, in_channels, out_channels, D=3, **kwargs):
         nn.Module.__init__(self)
@@ -19,21 +20,32 @@ class ResNetBase(nn.Module):
         self.weight_initialization()
 
     def network_initialization(self, in_channels, out_channels, D):
-
         self.inplanes = self.INIT_DIM
-        self.conv1 = ME.MinkowskiConvolution(in_channels, self.inplanes, kernel_size=5, stride=2, dimension=D)
+        self.conv1 = ME.MinkowskiConvolution(
+            in_channels, self.inplanes, kernel_size=5, stride=2, dimension=D
+        )
 
         self.bn1 = ME.MinkowskiBatchNorm(self.inplanes)
         self.relu = ME.MinkowskiReLU(inplace=True)
 
         self.pool = ME.MinkowskiAvgPooling(kernel_size=2, stride=2, dimension=D)
 
-        self.layer1 = self._make_layer(self.BLOCK, self.PLANES[0], self.LAYERS[0], stride=2)
-        self.layer2 = self._make_layer(self.BLOCK, self.PLANES[1], self.LAYERS[1], stride=2)
-        self.layer3 = self._make_layer(self.BLOCK, self.PLANES[2], self.LAYERS[2], stride=2)
-        self.layer4 = self._make_layer(self.BLOCK, self.PLANES[3], self.LAYERS[3], stride=2)
+        self.layer1 = self._make_layer(
+            self.BLOCK, self.PLANES[0], self.LAYERS[0], stride=2
+        )
+        self.layer2 = self._make_layer(
+            self.BLOCK, self.PLANES[1], self.LAYERS[1], stride=2
+        )
+        self.layer3 = self._make_layer(
+            self.BLOCK, self.PLANES[2], self.LAYERS[2], stride=2
+        )
+        self.layer4 = self._make_layer(
+            self.BLOCK, self.PLANES[3], self.LAYERS[3], stride=2
+        )
 
-        self.conv5 = ME.MinkowskiConvolution(self.inplanes, self.inplanes, kernel_size=3, stride=3, dimension=D)
+        self.conv5 = ME.MinkowskiConvolution(
+            self.inplanes, self.inplanes, kernel_size=3, stride=3, dimension=D
+        )
         self.bn5 = ME.MinkowskiBatchNorm(self.inplanes)
 
         self.glob_avg = ME.MinkowskiGlobalMaxPooling(dimension=D)
@@ -54,17 +66,32 @@ class ResNetBase(nn.Module):
         if stride != 1 or self.inplanes != planes * block.EXPANSION:
             downsample = nn.Sequential(
                 ME.MinkowskiConvolution(
-                    self.inplanes, planes * block.EXPANSION, kernel_size=1, stride=stride, dimension=self.D
+                    self.inplanes,
+                    planes * block.EXPANSION,
+                    kernel_size=1,
+                    stride=stride,
+                    dimension=self.D,
                 ),
                 ME.MinkowskiBatchNorm(planes * block.EXPANSION),
             )
         layers = []
         layers.append(
-            block(self.inplanes, planes, stride=stride, dilation=dilation, downsample=downsample, dimension=self.D)
+            block(
+                self.inplanes,
+                planes,
+                stride=stride,
+                dilation=dilation,
+                downsample=downsample,
+                dimension=self.D,
+            )
         )
         self.inplanes = planes * block.EXPANSION
         for i in range(1, blocks):
-            layers.append(block(self.inplanes, planes, stride=1, dilation=dilation, dimension=self.D))
+            layers.append(
+                block(
+                    self.inplanes, planes, stride=1, dilation=dilation, dimension=self.D
+                )
+            )
 
         return nn.Sequential(*layers)
 
@@ -113,8 +140,8 @@ class ResNet101(ResNetBase):
 
 
 class MinkUNetBase(ResNetBase):
-    BLOCK = None
-    PLANES = None
+    BLOCK: Optional[Any] = None
+    PLANES: Optional[Tuple[int, ...]] = None
     DILATIONS = (1, 1, 1, 1, 1, 1, 1, 1)
     LAYERS = (2, 2, 2, 2, 2, 2, 2, 2)
     INIT_DIM = 32
@@ -129,26 +156,36 @@ class MinkUNetBase(ResNetBase):
     def network_initialization(self, in_channels, out_channels, D):
         # Output of the first conv concated to conv6
         self.inplanes = self.INIT_DIM
-        self.conv0p1s1 = ME.MinkowskiConvolution(in_channels, self.inplanes, kernel_size=5, dimension=D)
+        self.conv0p1s1 = ME.MinkowskiConvolution(
+            in_channels, self.inplanes, kernel_size=5, dimension=D
+        )
 
         self.bn0 = ME.MinkowskiBatchNorm(self.inplanes)
 
-        self.conv1p1s2 = ME.MinkowskiConvolution(self.inplanes, self.inplanes, kernel_size=2, stride=2, dimension=D)
+        self.conv1p1s2 = ME.MinkowskiConvolution(
+            self.inplanes, self.inplanes, kernel_size=2, stride=2, dimension=D
+        )
         self.bn1 = ME.MinkowskiBatchNorm(self.inplanes)
 
         self.block1 = self._make_layer(self.BLOCK, self.PLANES[0], self.LAYERS[0])
 
-        self.conv2p2s2 = ME.MinkowskiConvolution(self.inplanes, self.inplanes, kernel_size=2, stride=2, dimension=D)
+        self.conv2p2s2 = ME.MinkowskiConvolution(
+            self.inplanes, self.inplanes, kernel_size=2, stride=2, dimension=D
+        )
         self.bn2 = ME.MinkowskiBatchNorm(self.inplanes)
 
         self.block2 = self._make_layer(self.BLOCK, self.PLANES[1], self.LAYERS[1])
 
-        self.conv3p4s2 = ME.MinkowskiConvolution(self.inplanes, self.inplanes, kernel_size=2, stride=2, dimension=D)
+        self.conv3p4s2 = ME.MinkowskiConvolution(
+            self.inplanes, self.inplanes, kernel_size=2, stride=2, dimension=D
+        )
 
         self.bn3 = ME.MinkowskiBatchNorm(self.inplanes)
         self.block3 = self._make_layer(self.BLOCK, self.PLANES[2], self.LAYERS[2])
 
-        self.conv4p8s2 = ME.MinkowskiConvolution(self.inplanes, self.inplanes, kernel_size=2, stride=2, dimension=D)
+        self.conv4p8s2 = ME.MinkowskiConvolution(
+            self.inplanes, self.inplanes, kernel_size=2, stride=2, dimension=D
+        )
         self.bn4 = ME.MinkowskiBatchNorm(self.inplanes)
         self.block4 = self._make_layer(self.BLOCK, self.PLANES[3], self.LAYERS[3])
 
@@ -181,7 +218,9 @@ class MinkUNetBase(ResNetBase):
         self.inplanes = self.PLANES[7] + self.INIT_DIM
         self.block8 = self._make_layer(self.BLOCK, self.PLANES[7], self.LAYERS[7])
 
-        self.final = ME.MinkowskiConvolution(self.PLANES[7], out_channels, kernel_size=1, bias=True, dimension=D)
+        self.final = ME.MinkowskiConvolution(
+            self.PLANES[7], out_channels, kernel_size=1, bias=True, dimension=D
+        )
         self.relu = ME.MinkowskiReLU(inplace=True)
 
     def forward(self, x):

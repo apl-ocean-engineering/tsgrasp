@@ -1,13 +1,16 @@
 import abc
+from typing import Tuple
+
 import torch
 import torch.nn.functional as F
-from typing import Tuple
+
 
 class TSGraspSuper(abc.ABC, torch.nn.Module):
     """A metaclass for temporal grasping networks.
-    
+
     This class defines functions to calculate labels or losses for a single
-    frame from a depth video. These functions are in a metaclass so that the identical functions can be inherited by different implementations of grasp synthesis networks that identify grasp from depth video."""
+    frame from a depth video. These functions are in a metaclass so that the identical functions can be inherited by different implementations of grasp synthesis networks that identify grasp from depth video.
+    """
 
     @staticmethod
     @torch.inference_mode()
@@ -19,18 +22,23 @@ class TSGraspSuper(abc.ABC, torch.nn.Module):
             contact_points (torch.Tensor): (..., W, 3) set of gripper contact points from positive grasps
 
         Returns:
-            min_dists (torch.Tensor): (..., V, 1) 
+            min_dists (torch.Tensor): (..., V, 1)
             min_idc (torch.Tensor): the corresponding indices of the closest points
         """
-        dists = torch.cdist(xyz, contact_points, p=2, 
+        dists = torch.cdist(
+            xyz,
+            contact_points,
+            p=2,
             # compute_mode="donot_use_mm_for_euclid_dist" # MUCH slower
-        ) # (V, W)
+        )  # (V, W)
         min_dists, min_idcs = torch.min(dists, dim=-1)
-        return min_dists, min_idcs 
+        return min_dists, min_idcs
 
     @staticmethod
     @torch.jit.script
-    def class_loss(pt_logits: torch.Tensor, pt_labels: torch.Tensor, conf_quantile: float) -> torch.Tensor:
+    def class_loss(
+        pt_logits: torch.Tensor, pt_labels: torch.Tensor, conf_quantile: float
+    ) -> torch.Tensor:
         """Return the pointwise classification loss.
 
         This loss is implemented as a binary cross-entropy loss, where only the top `conf_quantile` proportion of losses contribute to the loss.
@@ -43,8 +51,7 @@ class TSGraspSuper(abc.ABC, torch.nn.Module):
             bce_loss (torch.Tensor): (1,) scalar top-k BCE loss
         """
         bce_loss = F.binary_cross_entropy_with_logits(
-            pt_logits,
-            pt_labels, reduction='none'
+            pt_logits, pt_labels, reduction="none"
         ).ravel()
 
         if conf_quantile == 1.0:
@@ -57,7 +64,9 @@ class TSGraspSuper(abc.ABC, torch.nn.Module):
         return bce_loss
 
     @staticmethod
-    def width_loss(width_preds: torch.Tensor, width_labels: torch.Tensor, pt_labels: torch.Tensor) -> torch.Tensor:
+    def width_loss(
+        width_preds: torch.Tensor, width_labels: torch.Tensor, pt_labels: torch.Tensor
+    ) -> torch.Tensor:
         """Return the regression loss for the grasp width.
 
         Args:
@@ -70,14 +79,26 @@ class TSGraspSuper(abc.ABC, torch.nn.Module):
         """
         # MSE loss for width
         # Including only actual grasps
-        width_mse = (width_preds.ravel() - width_labels.ravel())**2
+        width_mse = (width_preds.ravel() - width_labels.ravel()) ** 2
         width_mse = width_mse[pt_labels.bool().ravel()]
-        width_loss = torch.mean(width_mse) if len(width_mse > 0) else torch.zeros(1, device=width_preds.device).squeeze()
+        width_loss = (
+            torch.mean(width_mse)
+            if len(width_mse > 0)
+            else torch.zeros(1, device=width_preds.device).squeeze()
+        )
 
         return width_loss
 
     @staticmethod
-    def add_s_loss(approach_dir, baseline_dir, positions, grasp_width, logits, labels, pos_grasp_tfs) -> torch.Tensor:
+    def add_s_loss(
+        approach_dir,
+        baseline_dir,
+        positions,
+        grasp_width,
+        logits,
+        labels,
+        pos_grasp_tfs,
+    ) -> torch.Tensor:
         """Computes ADD-S loss: the mean, minimum distance of predicted grasp control point matrices from ground truth control point matrices.
 
         Reduces memory by identifying the "nearest" grasps using mean R^3 distance as an approximation to R^{5x3} distance.
@@ -95,47 +116,43 @@ class TSGraspSuper(abc.ABC, torch.nn.Module):
             torch.Tensor: (1,) ADD-S scalar loss
         """
 
-        if len(pos_grasp_tfs) == 0: 
+        if len(pos_grasp_tfs) == 0:
             return torch.zeros(1, device=approach_dir.device).squeeze()
 
-        ## Retrieve ground truth control point tensors
+        # Retrieve ground truth control point tensors
         pos_control_points = TSGraspSuper.control_point_tensors(pos_grasp_tfs)
-        sym_pos_control_points = TSGraspSuper.control_point_tensors(pos_grasp_tfs, symmetric=True)
+        sym_pos_control_points = TSGraspSuper.control_point_tensors(
+            pos_grasp_tfs, symmetric=True
+        )
 
-        ## Retrieve 6-DOF predicted grasp transformations
+        # Retrieve 6-DOF predicted grasp transformations
         pred_grasp_tfs = TSGraspSuper.build_6dof_grasps(
             contact_pts=positions,
             baseline_dir=baseline_dir,
             approach_dir=approach_dir,
-            grasp_width=grasp_width
+            grasp_width=grasp_width,
         )
 
-        ## Construct control points for the predicted grasps, where label is True.
+        # Construct control points for the predicted grasps, where label is True.
         pred_cp = TSGraspSuper.control_point_tensors(
             pred_grasp_tfs, symmetric=False
-        ) # (V, 5, 3)
+        )  # (V, 5, 3)
 
-        ## Find the minimum pairwise distance from each predicted grasp to the ground truth grasps.
+        # Find the minimum pairwise distance from each predicted grasp to the ground truth grasps.
         dists = torch.minimum(
-            TSGraspSuper.approx_min_dists(
-                pred_cp, 
-                pos_control_points
-            ),
-            TSGraspSuper.approx_min_dists(
-            pred_cp, 
-            sym_pos_control_points
-            )
-        ) # (V,)
+            TSGraspSuper.approx_min_dists(pred_cp, pos_control_points),
+            TSGraspSuper.approx_min_dists(pred_cp, sym_pos_control_points),
+        )  # (V,)
 
         adds_loss = torch.mean(
-            torch.sigmoid(logits) *         # weight by confidence
-            labels *                        # only backprop positives
-            dists.unsqueeze(-1)             # weight by distance
+            torch.sigmoid(logits)
+            * labels  # weight by confidence
+            * dists.unsqueeze(-1)  # only backprop positives  # weight by distance
         )
         return adds_loss
 
     @staticmethod
-    def control_point_tensors(grasp_tfs: torch.Tensor, symmetric: bool=False):
+    def control_point_tensors(grasp_tfs: torch.Tensor, symmetric: bool = False):
         """Construct an (N, 5, 3) Tensor of "gripper control points" using the provided grasp poses. From Contact-GraspNet.
 
         Each of the N grasps is represented by five 3-D control points.
@@ -144,25 +161,25 @@ class TSGraspSuper(abc.ABC, torch.nn.Module):
             grasp_tfs (torch.Tensor): (N, 4, 4) homogeneous grasp poses
             symmetric (bool): whether to use the symmetric (swapped fingers) tensor
         """
-        
+
         # Get control point tensor for single grasp
         if symmetric:
-            gripper_pts = TSGraspSuper.sym_single_control_point_tensor(device=grasp_tfs.device)
+            gripper_pts = TSGraspSuper.sym_single_control_point_tensor(
+                device=grasp_tfs.device
+            )
         else:
-            gripper_pts = TSGraspSuper.single_control_point_tensor(device=grasp_tfs.device)
+            gripper_pts = TSGraspSuper.single_control_point_tensor(
+                device=grasp_tfs.device
+            )
 
         # make (5, 4) stack of homogeneous vectors
-        gripper_pts = torch.cat([
-            gripper_pts, 
-            torch.ones((len(gripper_pts), 1), device=grasp_tfs.device)],
-            dim=1
+        gripper_pts = torch.cat(
+            [gripper_pts, torch.ones((len(gripper_pts), 1), device=grasp_tfs.device)],
+            dim=1,
         )
 
         # Transform the gripper-frame control points into camera frame
-        pred_cp = torch.matmul(
-            gripper_pts, 
-            torch.transpose(grasp_tfs, -1, -2)
-        )[...,:3]
+        pred_cp = torch.matmul(gripper_pts, torch.transpose(grasp_tfs, -1, -2))[..., :3]
 
         return pred_cp
 
@@ -181,20 +198,26 @@ class TSGraspSuper(abc.ABC, torch.nn.Module):
         """
         shape = contact_pts.shape[:-1]
         gripper_depth = TSGraspSuper.gripper_depth()
-        grasps_R = torch.stack([baseline_dir, torch.cross(approach_dir, baseline_dir), approach_dir], axis=-1)
-        grasps_t = contact_pts + grasp_width/2 * baseline_dir - gripper_depth * approach_dir
+        grasps_R = torch.stack(
+            [baseline_dir, torch.cross(approach_dir, baseline_dir), approach_dir],
+            axis=-1,
+        )
+        grasps_t = (
+            contact_pts + grasp_width / 2 * baseline_dir - gripper_depth * approach_dir
+        )
         ones = torch.ones((*shape, 1, 1), device=contact_pts.device)
         zeros = torch.zeros((*shape, 1, 3), device=contact_pts.device)
         homog_vec = torch.cat([zeros, ones], axis=-1)
 
-        pred_grasp_tfs = torch.cat([
-            torch.cat([grasps_R, grasps_t.unsqueeze(-1)], dim=-1), 
-            homog_vec
-        ], dim=-2)
+        pred_grasp_tfs = torch.cat(
+            [torch.cat([grasps_R, grasps_t.unsqueeze(-1)], dim=-1), homog_vec], dim=-2
+        )
         return pred_grasp_tfs
 
     @staticmethod
-    def unbuild_6dof_grasps(grasp_tfs: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+    def unbuild_6dof_grasps(
+        grasp_tfs: torch.Tensor,
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
         """Calculate the approach direction and baseline directions corrsponding to each homogeneous 6-DOF pose matrix.
 
         Args: grasp_tfs (torch.Tensor): (N, 4, 4) homogeneous gripper
@@ -203,10 +226,9 @@ class TSGraspSuper(abc.ABC, torch.nn.Module):
         Returns: Tuple[torch.Tensor, torch.Tensor]: (N, 3) gripper approach
             axis and gripper baseline direction
         """
-        approach_dir = grasp_tfs[..., :3, 2] # z-axis of pose orientation
-        baseline_dir = grasp_tfs[..., :3, 0] # x-axis of pose orientation
+        approach_dir = grasp_tfs[..., :3, 2]  # z-axis of pose orientation
+        baseline_dir = grasp_tfs[..., :3, 0]  # x-axis of pose orientation
         return approach_dir, baseline_dir
-
 
     @staticmethod
     def approx_min_dists(pred_cp: torch.Tensor, gt_cp: torch.Tensor) -> torch.Tensor:
@@ -214,7 +236,7 @@ class TSGraspSuper(abc.ABC, torch.nn.Module):
         control-point-tensor in `pred_cp` from any of the control-point-tensors in `gt_cp`.
 
         Approximates distance by finding the mean three-dimensional coordinate of each tensor, so that the M x N pairwise lookup takes up one-fifth of the memory as comparing all control-point-tensors in full, avoiding the creation of a (N, M, 5, 3) matrix.
-        
+
         Once the mean-closest tensor is found for each point, the full matrix L2
         distance is returned.
 
@@ -226,69 +248,64 @@ class TSGraspSuper(abc.ABC, torch.nn.Module):
             best_l2_dists (torch.Tensor): (..., N,) matrix of closest matrix-L2 distances
         """
         # Take the mean 3-vector from each 5x3 control point Tensor
-        m_pred_cp = pred_cp.mean(dim=-2) # (N, 3)
-        m_gt_cp = gt_cp.mean(dim=-2)     # (M, 3)
+        m_pred_cp = pred_cp.mean(dim=-2)  # (N, 3)
+        m_gt_cp = gt_cp.mean(dim=-2)  # (M, 3)
 
         # Find the squared L2 distance between all N pred and M gt means.
         # Find the index of the ground truth grasp minimizing the L2 distance.
-        dists, best_idxs = TSGraspSuper.closest_points(
-            m_pred_cp, m_gt_cp
-        ) # (N, 1)
+        dists, best_idxs = TSGraspSuper.closest_points(m_pred_cp, m_gt_cp)  # (N, 1)
 
         # Select the full 5x3 matrix corresponding to each minimum-distance grasp.
         closest_gt_cps = multi_dim_index(gt_cp, best_idxs)
 
         # Find the matrix L2 distances
         best_l2_dists = torch.sqrt(
-            torch.sum((pred_cp - closest_gt_cps)**2, 
-            dim=(-1, -2))
-        ) # (N,)
+            torch.sum((pred_cp - closest_gt_cps) ** 2, dim=(-1, -2))
+        )  # (N,)
 
         return best_l2_dists
 
     @staticmethod
     def class_width_labels(
-        contact_pts: torch.Tensor,
-        positions: torch.Tensor,
-        pt_radius: float
+        contact_pts: torch.Tensor, positions: torch.Tensor, pt_radius: float
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         """Get the pointwise class labels and width labels for a "singly batched" set of grasp contact information.
 
         Args:
-            contact_pts (torch.Tensor): (T, N_GT_GRASPS, 2, 3) positive grasp contact points.
-            positions (torch.Tensor): (T, N_PTS, 3) camera-frame point cloud
+            contact_pts (torch.Tensor): (t, N_GT_GRASPS, 2, 3) positive grasp contact points.
+            positions (torch.Tensor): (t, n_pts, 3) camera-frame point cloud
             pt_radius (float): distance threshold for labeling points
 
         Returns:
-            Tuple[torch.Tensor, torch.Tensor]: (T, N_PTS, 1) boolean point label and (T, N_PTS, 1) float width label.
+            Tuple[torch.Tensor, torch.Tensor]: (t, n_pts, 1) boolean point label and (t, n_pts, 1) float width label.
         """
 
-        T, N_PTS, _3 = positions.shape
+        t, n_pts, _3 = positions.shape
         if contact_pts.shape[1] == 0:
-            return torch.zeros((T, N_PTS, 1), dtype=bool, device=contact_pts.device), None
+            return (
+                torch.zeros((t, n_pts, 1), dtype=bool, device=contact_pts.device),
+                None,
+            )
 
-        ## Calculate all grasp widths
+        # Calculate all grasp widths
         grasp_widths = torch.linalg.norm(
-            contact_pts[...,0, :] - contact_pts[...,1, :],
-            dim=-1
-        ).unsqueeze(-1) # (T, N_GT_GRASPS_i, 1)
+            contact_pts[..., 0, :] - contact_pts[..., 1, :], dim=-1
+        ).unsqueeze(
+            -1
+        )  # (T, N_GT_GRASPS_i, 1)
 
-        ## Stack contact points
+        # Stack contact points
         # Concatenate the left and right contact points
-        contact_pts = torch.cat([
-            contact_pts[:,:,0,:], contact_pts[:,:,1,:]
-            ], dim=-2
-        ) # (T, 2N_GT_GRASPS_i, 3)
+        contact_pts = torch.cat(
+            [contact_pts[:, :, 0, :], contact_pts[:, :, 1, :]], dim=-2
+        )  # (T, 2N_GT_GRASPS_i, 3)
 
-        ## Class labels
+        # Class labels
         # Find closest ground truth points for labeling
-        dists, min_idcs = TSGraspSuper.closest_points(
-            positions,
-            contact_pts
-        )
+        dists, min_idcs = TSGraspSuper.closest_points(positions, contact_pts)
         pt_labels = (dists < pt_radius).unsqueeze(-1)
 
-        ## Width labels
+        # Width labels
         # the minimum index could belong to a right-finger gripper point
         width_labels = grasp_widths.repeat(1, 2, 1)
         width_labels = torch.gather(width_labels, dim=1, index=min_idcs.unsqueeze(-1))
@@ -305,7 +322,7 @@ class TSGraspSuper(abc.ABC, torch.nn.Module):
         grasp_tfs: torch.Tensor,
         top_conf_quantile: float,
         pt_labels: torch.Tensor,
-        width_labels: torch.Tensor
+        width_labels: torch.Tensor,
     ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """Get the ADD-S loss, width loss, and classification loss for a set of predicted grasp information and labels.
 
@@ -324,8 +341,8 @@ class TSGraspSuper(abc.ABC, torch.nn.Module):
             Tuple[torch.Tensor, torch.Tensor, torch.Tensor]: ADD-S loss, width loss, and classification loss (scalars).
         """
 
-        if pt_labels.sum() > 0: # sometimes no grasps
-            ## ADD-S Loss
+        if pt_labels.sum() > 0:  # sometimes no grasps
+            # ADD-S Loss
             add_s_loss = TSGraspSuper.add_s_loss(
                 approach_dir=approach_dir,
                 baseline_dir=baseline_dir,
@@ -333,79 +350,60 @@ class TSGraspSuper(abc.ABC, torch.nn.Module):
                 grasp_width=grasp_offset,
                 logits=class_logits,
                 labels=pt_labels,
-                pos_grasp_tfs=grasp_tfs
+                pos_grasp_tfs=grasp_tfs,
             )
-            
-            ## Width loss
+
+            # Width loss
             width_loss = TSGraspSuper.width_loss(
-                width_preds=grasp_offset,
-                width_labels=width_labels,
-                pt_labels=pt_labels
+                width_preds=grasp_offset, width_labels=width_labels, pt_labels=pt_labels
             )
 
         else:
             add_s_loss = torch.zeros(1, device=class_logits.device).squeeze()
             width_loss = torch.zeros(1, device=class_logits.device).squeeze()
 
-        ## Classification loss
+        # Classification loss
         class_loss = TSGraspSuper.class_loss(
             pt_logits=class_logits,
             pt_labels=pt_labels.float(),
-            conf_quantile=top_conf_quantile
+            conf_quantile=top_conf_quantile,
         )
 
         return add_s_loss, width_loss, class_loss
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-    ## Hard-coded gripper parameters.
+    # Hard-coded gripper parameters.
     # These should probably be read in from an external parameter file, but writing them as hard-coded static methods is clear and simple.
     @staticmethod
     def single_control_point_tensor(device: torch.device):
         """Retrieve the (5,3) matrix of control points for a single gripper."""
-        return torch.Tensor([[ 0.0000000e+00,  0.0000000e+00,  0.0000000e+00],
-       [ 5.2687433e-02, -5.9955313e-05,  7.5273141e-02],
-       [-5.2687433e-02,  5.9955313e-05,  7.5273141e-02],
-       [ 5.2687433e-02, -5.9955313e-05,  1.0527314e-01],
-       [-5.2687433e-02,  5.9955313e-05,  1.0527314e-01]]).to(device)
+        return torch.Tensor(
+            [
+                [0.0000000e00, 0.0000000e00, 0.0000000e00],
+                [5.2687433e-02, -5.9955313e-05, 7.5273141e-02],
+                [-5.2687433e-02, 5.9955313e-05, 7.5273141e-02],
+                [5.2687433e-02, -5.9955313e-05, 1.0527314e-01],
+                [-5.2687433e-02, 5.9955313e-05, 1.0527314e-01],
+            ]
+        ).to(device)
 
     @staticmethod
     def sym_single_control_point_tensor(device: torch.device):
         """Retrieve the (5,3) matrix of control points for a single gripper, with the two fingers switched."""
-        return torch.Tensor([[ 0.0000000e+00,  0.0000000e+00,  0.0000000e+00],
-       [-5.2687433e-02,  5.9955313e-05,  7.5273141e-02],
-       [ 5.2687433e-02, -5.9955313e-05,  7.5273141e-02],
-       [-5.2687433e-02,  5.9955313e-05,  1.0527314e-01],
-       [ 5.2687433e-02, -5.9955313e-05,  1.0527314e-01]]).to(device)
+        return torch.Tensor(
+            [
+                [0.0000000e00, 0.0000000e00, 0.0000000e00],
+                [-5.2687433e-02, 5.9955313e-05, 7.5273141e-02],
+                [5.2687433e-02, -5.9955313e-05, 7.5273141e-02],
+                [-5.2687433e-02, 5.9955313e-05, 1.0527314e-01],
+                [5.2687433e-02, -5.9955313e-05, 1.0527314e-01],
+            ]
+        ).to(device)
 
     @staticmethod
     def gripper_depth():
         """Retrieve the distance from the contact point to the gripper wrist along the gripper approach direction."""
         return 0.1034
+
 
 def multi_dim_index(T: torch.Tensor, idx: torch.LongTensor) -> torch.Tensor:
     """Index into tensor `T`  with multi-dimensional index tensor `idx`.
@@ -416,16 +414,17 @@ def multi_dim_index(T: torch.Tensor, idx: torch.LongTensor) -> torch.Tensor:
     > bar = multi_dim_index(foo, bar)               # (1234, 3, 3, 7)
 
     Args:
-        T (torch.Tensor): (*shape, B, *endshape) input tensor 
+        T (torch.Tensor): (*shape, B, *endshape) input tensor
         idx (torch.LongTensor): (*shape, C)
 
     Returns:
         torch.Tensor: [description]
     """
-    endshape = T.shape[idx.ndim:]
+    endshape = T.shape[idx.ndim :]
     return torch.gather(
         T,
-        dim=idx.ndim-1,
-        index=idx.reshape(*idx.shape, *[1]*(len(endshape))
-        ).repeat(*[1]*idx.ndim, *endshape)
+        dim=idx.ndim - 1,
+        index=idx.reshape(*idx.shape, *[1] * (len(endshape))).repeat(
+            *[1] * idx.ndim, *endshape
+        ),
     )

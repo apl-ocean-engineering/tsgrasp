@@ -24,10 +24,25 @@ class BasicBlockBase(nn.Module):
     ):
         super(BasicBlockBase, self).__init__()
 
-        self.conv1 = conv(inplanes, planes, kernel_size=3, stride=stride, dilation=dilation, conv_type=conv_type, D=D)
+        self.conv1 = conv(
+            inplanes,
+            planes,
+            kernel_size=3,
+            stride=stride,
+            dilation=dilation,
+            conv_type=conv_type,
+            D=D,
+        )
         self.norm1 = get_norm(self.NORM_TYPE, planes, D, bn_momentum=bn_momentum)
         self.conv2 = conv(
-            planes, planes, kernel_size=3, stride=1, dilation=dilation, bias=False, conv_type=conv_type, D=D
+            planes,
+            planes,
+            kernel_size=3,
+            stride=1,
+            dilation=dilation,
+            bias=False,
+            conv_type=conv_type,
+            D=D,
         )
         self.norm2 = get_norm(self.NORM_TYPE, planes, D, bn_momentum=bn_momentum)
         self.relu = MinkowskiReLU(inplace=True)
@@ -83,11 +98,21 @@ class BottleneckBase(nn.Module):
         self.conv1 = conv(inplanes, planes, kernel_size=1, D=D)
         self.norm1 = get_norm(self.NORM_TYPE, planes, D, bn_momentum=bn_momentum)
 
-        self.conv2 = conv(planes, planes, kernel_size=3, stride=stride, dilation=dilation, conv_type=conv_type, D=D)
+        self.conv2 = conv(
+            planes,
+            planes,
+            kernel_size=3,
+            stride=stride,
+            dilation=dilation,
+            conv_type=conv_type,
+            D=D,
+        )
         self.norm2 = get_norm(self.NORM_TYPE, planes, D, bn_momentum=bn_momentum)
 
         self.conv3 = conv(planes, planes * self.expansion, kernel_size=1, D=D)
-        self.norm3 = get_norm(self.NORM_TYPE, planes * self.expansion, D, bn_momentum=bn_momentum)
+        self.norm3 = get_norm(
+            self.NORM_TYPE, planes * self.expansion, D, bn_momentum=bn_momentum
+        )
 
         self.relu = MinkowskiReLU(inplace=True)
         self.downsample = downsample
@@ -136,7 +161,15 @@ class ResNetBase(MinkowskiNetwork):
     HAS_LAST_BLOCK = False
     CONV_TYPE = ConvType.HYPERCUBE
 
-    def __init__(self, in_channels, out_channels, D, conv1_kernel_size=3, dilations=[1, 1, 1, 1], **kwargs):
+    def __init__(
+        self,
+        in_channels,
+        out_channels,
+        D,
+        conv1_kernel_size=3,
+        dilations=[1, 1, 1, 1],
+        **kwargs,
+    ):
         super(ResNetBase, self).__init__(D)
         self.in_channels = in_channels
         self.out_channels = out_channels
@@ -159,12 +192,20 @@ class ResNetBase(MinkowskiNetwork):
         bn_momentum = 1
         self.inplanes = self.INIT_DIM
         self.conv1 = conv(
-            in_channels, self.inplanes, kernel_size=space_n_time_m(self.conv1_kernel_size, 1), stride=1, D=D
+            in_channels,
+            self.inplanes,
+            kernel_size=space_n_time_m(self.conv1_kernel_size, 1),
+            stride=1,
+            D=D,
         )
 
-        self.bn1 = get_norm(NormType.BATCH_NORM, self.inplanes, D=self.D, bn_momentum=bn_momentum)
+        self.bn1 = get_norm(
+            NormType.BATCH_NORM, self.inplanes, D=self.D, bn_momentum=bn_momentum
+        )
         self.relu = ME.MinkowskiReLU(inplace=True)
-        self.pool = sum_pool(kernel_size=space_n_time_m(2, 1), stride=space_n_time_m(2, 1), D=D)
+        self.pool = sum_pool(
+            kernel_size=space_n_time_m(2, 1), stride=space_n_time_m(2, 1), D=D
+        )
 
         self.layer1 = self._make_layer(
             self.BLOCK,
@@ -195,7 +236,13 @@ class ResNetBase(MinkowskiNetwork):
             dilation=space_n_time_m(dilations[3], 1),
         )
 
-        self.final = conv(self.PLANES[3] * self.BLOCK.expansion, out_channels, kernel_size=1, bias=True, D=D)
+        self.final = conv(
+            self.PLANES[3] * self.BLOCK.expansion,
+            out_channels,
+            kernel_size=1,
+            bias=True,
+            D=D,
+        )
 
     def weight_initialization(self):
         for m in self.modules():
@@ -203,12 +250,33 @@ class ResNetBase(MinkowskiNetwork):
                 nn.init.constant_(m.bn.weight, 1)
                 nn.init.constant_(m.bn.bias, 0)
 
-    def _make_layer(self, block, planes, blocks, stride=1, dilation=1, norm_type=NormType.BATCH_NORM, bn_momentum=0.1):
+    def _make_layer(
+        self,
+        block,
+        planes,
+        blocks,
+        stride=1,
+        dilation=1,
+        norm_type=NormType.BATCH_NORM,
+        bn_momentum=0.1,
+    ):
         downsample = None
         if stride != 1 or self.inplanes != planes * block.expansion:
             downsample = nn.Sequential(
-                conv(self.inplanes, planes * block.expansion, kernel_size=1, stride=stride, bias=False, D=self.D),
-                get_norm(norm_type, planes * block.expansion, D=self.D, bn_momentum=bn_momentum),
+                conv(
+                    self.inplanes,
+                    planes * block.expansion,
+                    kernel_size=1,
+                    stride=stride,
+                    bias=False,
+                    D=self.D,
+                ),
+                get_norm(
+                    norm_type,
+                    planes * block.expansion,
+                    D=self.D,
+                    bn_momentum=bn_momentum,
+                ),
             )
         layers = []
         layers.append(
@@ -224,7 +292,16 @@ class ResNetBase(MinkowskiNetwork):
         )
         self.inplanes = planes * block.expansion
         for i in range(1, blocks):
-            layers.append(block(self.inplanes, planes, stride=1, dilation=dilation, conv_type=self.CONV_TYPE, D=self.D))
+            layers.append(
+                block(
+                    self.inplanes,
+                    planes,
+                    stride=1,
+                    dilation=dilation,
+                    conv_type=self.CONV_TYPE,
+                    D=self.D,
+                )
+            )
 
         return nn.Sequential(*layers)
 
@@ -257,7 +334,9 @@ class Res16UNetBase(ResNetBase):
     # To use the model, must call initialize_coords before forward pass.
     # Once data is processed, call clear to reset the model before calling initialize_coords
     def __init__(self, in_channels, out_channels, D=3, conv1_kernel_size=3, **kwargs):
-        super(Res16UNetBase, self).__init__(in_channels, out_channels, D, conv1_kernel_size)
+        super(Res16UNetBase, self).__init__(
+            in_channels, out_channels, D, conv1_kernel_size
+        )
 
     def network_initialization(self, in_channels, out_channels, D):
         # Setup net_metadata
@@ -369,7 +448,9 @@ class Res16UNetBase(ResNetBase):
             conv_type=self.NON_BLOCK_CONV_TYPE,
             D=D,
         )
-        self.bntr4 = get_norm(self.NORM_TYPE, self.PLANES[4], D, bn_momentum=bn_momentum)
+        self.bntr4 = get_norm(
+            self.NORM_TYPE, self.PLANES[4], D, bn_momentum=bn_momentum
+        )
 
         self.inplanes = self.PLANES[4] + self.PLANES[2] * self.BLOCK.expansion
         self.block5 = self._make_layer(
@@ -390,7 +471,9 @@ class Res16UNetBase(ResNetBase):
             conv_type=self.NON_BLOCK_CONV_TYPE,
             D=D,
         )
-        self.bntr5 = get_norm(self.NORM_TYPE, self.PLANES[5], D, bn_momentum=bn_momentum)
+        self.bntr5 = get_norm(
+            self.NORM_TYPE, self.PLANES[5], D, bn_momentum=bn_momentum
+        )
 
         self.inplanes = self.PLANES[5] + self.PLANES[1] * self.BLOCK.expansion
         self.block6 = self._make_layer(
@@ -411,7 +494,9 @@ class Res16UNetBase(ResNetBase):
             conv_type=self.NON_BLOCK_CONV_TYPE,
             D=D,
         )
-        self.bntr6 = get_norm(self.NORM_TYPE, self.PLANES[6], D, bn_momentum=bn_momentum)
+        self.bntr6 = get_norm(
+            self.NORM_TYPE, self.PLANES[6], D, bn_momentum=bn_momentum
+        )
 
         self.inplanes = self.PLANES[6] + self.PLANES[0] * self.BLOCK.expansion
         self.block7 = self._make_layer(
@@ -432,7 +517,9 @@ class Res16UNetBase(ResNetBase):
             conv_type=self.NON_BLOCK_CONV_TYPE,
             D=D,
         )
-        self.bntr7 = get_norm(self.NORM_TYPE, self.PLANES[7], D, bn_momentum=bn_momentum)
+        self.bntr7 = get_norm(
+            self.NORM_TYPE, self.PLANES[7], D, bn_momentum=bn_momentum
+        )
 
         self.inplanes = self.PLANES[7] + self.INIT_DIM
         self.block8 = self._make_layer(
@@ -444,7 +531,9 @@ class Res16UNetBase(ResNetBase):
             bn_momentum=bn_momentum,
         )
 
-        self.final = conv(self.PLANES[7], out_channels, kernel_size=1, stride=1, bias=True, D=D)
+        self.final = conv(
+            self.PLANES[7], out_channels, kernel_size=1, stride=1, bias=True, D=D
+        )
         self.relu = MinkowskiReLU(inplace=True)
 
     def forward(self, x):
@@ -608,11 +697,14 @@ class STRes16UNet14(STRes16UNetBase, Res16UNet14):
 class STRes16UNet14A(STRes16UNetBase, Res16UNet14A):
     pass
 
-class STRes16UNet14B(Res16UNet14B): # Tim
+
+class STRes16UNet14B(Res16UNet14B):  # Tim
     CONV_TYPE = ConvType.SPATIO_TEMPORAL_HYPERCROSS
 
-class STRes16UNet34C(Res16UNet34C): # Tim
+
+class STRes16UNet34C(Res16UNet34C):  # Tim
     CONV_TYPE = ConvType.SPATIO_TEMPORAL_HYPERCROSS
+
 
 class STRes16UNet18(STRes16UNetBase, Res16UNet18):
     pass
@@ -642,7 +734,16 @@ class STResTesseract16UNet18A(STRes16UNet18A, STResTesseract16UNetBase):
     pass
 
 
-def get_block(norm_type, inplanes, planes, stride=1, dilation=1, downsample=None, bn_momentum=0.1, D=3):
+def get_block(
+    norm_type,
+    inplanes,
+    planes,
+    stride=1,
+    dilation=1,
+    downsample=None,
+    bn_momentum=0.1,
+    D=3,
+):
     if norm_type == NormType.BATCH_NORM:
         return BasicBlock(
             inplanes=inplanes,
@@ -654,6 +755,8 @@ def get_block(norm_type, inplanes, planes, stride=1, dilation=1, downsample=None
             D=D,
         )
     elif norm_type == NormType.INSTANCE_NORM:
-        return BasicBlockIN(inplanes, planes, stride, dilation, downsample, bn_momentum, D)
+        return BasicBlockIN(
+            inplanes, planes, stride, dilation, downsample, bn_momentum, D
+        )
     else:
         raise ValueError(f"Type {norm_type}, not defined")
