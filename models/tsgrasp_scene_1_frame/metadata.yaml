@@ -1,0 +1,45 @@
+# Parameters for Hydra to Load:
+training:
+  gpus: 1
+  batch_size: 48
+  max_epochs: 100
+  optimizer:
+    learning_rate: 0.00025
+    lr_decay: 0.99
+  animate_outputs: false
+  make_sc_curve: false
+  use_wandb: false
+  wandb:
+    project: TSGrasp
+    experiment: tsgrasp_scene
+    notes: First run attempting table scene data.
+model:
+  _target_: tsgrasp.net.lit_tsgraspnet.LitTSGraspNet
+  model_cfg:
+    backbone_model_name: MinkUNet14A
+    D: 4
+    backbone_out_dim: 128
+    add_s_loss_coeff: 10
+    bce_loss_coeff: 1
+    width_loss_coeff: 1
+    top_confidence_quantile: 1.0
+    feature_dimension: 1
+    pt_radius: 0.005
+    grid_size: 0.005
+    conv1_kernel_size: 3
+    dilations:
+    - 1 1 1 1
+
+# ROS Specific Parameters
+ckpt_path: src/grasp_synthesis/tsgrasp/models/tsgrasp_scene_1_frame/model.ckpt # relative to pkg_root
+world_bounds_topic: /point_cloud_cropper/bounding_box
+pc_topic: /zed/zed_node/point_cloud/cloud_registered
+confidence_threshold: 0.0
+gripper_depth: 0.090
+downsample: 0.50
+queue_len: 1
+top_k: 100
+outlier_threshold: 0.00005
+pts_per_frame: 45000
+bounds_min: [0, -0.4, 0.15]
+bounds_max: [2, -0.05, 2]
