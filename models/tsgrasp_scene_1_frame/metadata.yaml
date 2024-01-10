@@ -36,6 +36,7 @@ world_bounds_topic: /point_cloud_cropper/bounding_box
 pc_topic: /zed/zed_node/point_cloud/cloud_registered
 confidence_threshold: 0.0
 gripper_depth: 0.090
+offset_distance: 0.10
 downsample: 0.50
 queue_len: 1
 top_k: 100
