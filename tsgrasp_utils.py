@@ -5,22 +5,37 @@ Specific to tsgrasp as it imports Minkowski engine
 Author: Tim Player
 """
 # Standard library
-import time
+from dataclasses import dataclass
 from typing import List
 
 # Third-party
 import MinkowskiEngine
 import numpy as np
-import rospy
-import tf2_ros
 import torch
 import yaml
-from geometry_msgs.msg import Point, PoseStamped
 from matplotlib import colormaps as cm
-from std_msgs.msg import Header
-from visualization_msgs.msg import Marker, MarkerArray
 
-from raven_manip_msgs.msg import Grasps
+
+@dataclass
+class PyPose:
+    """
+    Dataclass version of a ROS geometry_msgs/Pose
+    """
+
+    position: list
+    orientation: list
+
+
+@dataclass
+class PyGrasps:
+    """
+    Dataclass version of a raven_manip_msgs Grasps
+    """
+
+    poses: List[PyPose]
+    orbital_poses: List[PyPose]
+    confs: List[float]
+    widths: List[float]
 
 
 def quaternion_to_rotation_matrix(quat: list) -> np.array:
@@ -61,87 +76,6 @@ def quaternion_to_rotation_matrix(quat: list) -> np.array:
     return rot_matrix
 
 
-def generate_bounding_box_msg(
-    min_pt: np.array, center_pt: np.array, max_pt: np.array, frame="world"
-):
-    """
-    Returns a MarkerArray bounding box centered at center_pt.
-    Also includes a marker at the center_pt
-
-    Args:
-        min_pt (np.array): _description_
-        center_pt (np.array): center point
-        max_pt (np.array): _description_
-        frame (str): Frame to plop the marker array in
-    """
-    corners = [
-        Point(min_pt[0], min_pt[1], min_pt[2]),
-        Point(max_pt[0], min_pt[1], min_pt[2]),
-        Point(max_pt[0], max_pt[1], min_pt[2]),
-        Point(min_pt[0], max_pt[1], min_pt[2]),
-        Point(min_pt[0], min_pt[1], max_pt[2]),
-        Point(max_pt[0], min_pt[1], max_pt[2]),
-        Point(max_pt[0], max_pt[1], max_pt[2]),
-        Point(min_pt[0], max_pt[1], max_pt[2]),
-    ]
-    edges = [
-        (0, 1),
-        (1, 2),
-        (2, 3),
-        (3, 0),
-        (4, 5),
-        (5, 6),
-        (6, 7),
-        (7, 4),
-        (0, 4),
-        (1, 5),
-        (2, 6),
-        (3, 7),
-    ]
-    marker_array = MarkerArray()
-    header = Header()
-    header.stamp = rospy.Time.now()
-    header.frame_id = frame
-
-    marker = Marker()
-    marker.header = header
-    marker.id = len(corners) + 1
-    marker.type = Marker.SPHERE
-    marker.action = Marker.ADD
-    marker.pose.position = Point(center_pt[0], center_pt[1], center_pt[2])
-    marker.pose.orientation.w = 1.0
-    marker.scale.x = 0.02
-    marker.scale.y = 0.02
-    marker.scale.z = 0.02
-    marker.color.r = 0.0
-    marker.color.g = 1.0
-    marker.color.b = 0.0
-    marker.color.a = 1.0
-    marker.lifetime = rospy.Duration(0.5)
-    marker_array.markers.append(marker)
-
-    # Create the line list connecting the corners
-    line_list = Marker()
-    line_list.header = header
-    line_list.id = len(corners) + 2
-    line_list.type = Marker.LINE_LIST
-    line_list.action = Marker.ADD
-    line_list.pose.orientation.w = 1.0
-    line_list.scale.x = 0.01
-    line_list.color.r = 1.0
-    line_list.color.g = 0.0
-    line_list.color.b = 0.0
-    line_list.color.a = 1.0
-    line_list.lifetime = rospy.Duration(0.5)
-    # Add line endpoints for all edges
-    for edge_pair in edges:
-        line_list.points.append(corners[edge_pair[0]])
-        line_list.points.append(corners[edge_pair[1]])
-    marker_array.markers.append(line_list)
-
-    return marker_array
-
-
 def generate_color_lookup(cm_str="magma") -> np.array:
     """
     Generates integer lookup array for ints -> colors
@@ -176,8 +110,8 @@ def model_metadata_from_yaml(yaml_file_path: str) -> dict:
     try:
         with open(yaml_file_path, "r", encoding="utf-8") as stream:
             metadata = yaml.safe_load(stream)
-    except yaml.YAMLError as exc:
-        rospy.logwarn(exc)
+    except yaml.YAMLError as ex:
+        print(ex)
     return metadata
 
 
@@ -493,96 +427,6 @@ def build_6dof_grasps(
         [torch.cat([grasps_r, grasps_t.unsqueeze(-1)], dim=-1), homog_vec], dim=-2
     )
     return pred_grasp_tfs
-
-
-class TFHelper:
-    """
-    Create a buffer of transforms and update it with TransformListener
-    tf2 abstraction - https://gitlab.msu.edu/av/av_notes/-/blob/master/ROS/Coordinate_Transforms.md
-    """
-
-    def __init__(self):
-        self._buffer = tf2_ros.Buffer()  # Creates a frame buffer
-        tf2_ros.TransformListener(
-            self._buffer
-        )  # TransformListener fills the buffer as background task
-        time.sleep(0.25)
-
-    def get_transform(self, source_frame, target_frame):
-        """Lookup latest transform between source_frame and target_frame from the buffer"""
-        try:
-            trans = self._buffer.lookup_transform(
-                target_frame, source_frame, rospy.Time(0), rospy.Duration(0.2)
-            )
-        except (
-            tf2_ros.LookupException,
-            tf2_ros.ConnectivityException,
-            tf2_ros.ExtrapolationException,
-        ) as ex:
-            rospy.logerr(
-                f"Cannot find transformation from {source_frame} to {target_frame}."
-            )
-            raise ex
-        return trans
-
-    def transform_pose(self, pose_s, target_frame="odom"):
-        """
-        pose_s: PoseStamped will be transformed to target_frame
-
-        Args:
-            pose_s (PoseStampled): PoseStamped msg to transform
-            target_frame (str, optional): Target Frame. Defaults to "odom".
-
-        Returns:
-            pose: transformed pose
-        """
-        return self._buffer.transform(pose_s, target_frame)
-
-    def transform_grasps_msg(self, grasps_msg: Grasps, target_frame: str) -> Grasps:
-        """
-        Transform a grasps_msg to a new frame
-
-        Args:
-            grasps_msg (Grasps): Incoming grasps message
-            target_frame (str): Frame to transform msg to
-
-        Returns:
-            Grasps: Transformed grasps message
-        """
-        transformed_grasps = grasps_msg
-
-        # Transform poses
-        for pose in grasps_msg.poses:
-            pose_s = PoseStamped()
-            pose_s.header = grasps_msg.header
-            pose_s.pose = pose
-            try:
-                tf_pose = self._buffer.transform(pose_s, target_frame, rospy.Time.now())
-                transformed_grasps.poses.append(tf_pose.pose)
-            except (
-                tf2_ros.LookupException,
-                tf2_ros.ConnectivityException,
-                tf2_ros.ExtrapolationException,
-            ):
-                rospy.logwarn(f"Failed to transform pose to {target_frame}")
-
-        # Transform orbital_poses
-        for orbital_pose in grasps_msg.orbital_poses:
-            pose_s = PoseStamped()
-            pose_s.header = grasps_msg.header
-            pose_s.pose = orbital_pose
-            try:
-                tf_orbital_pose = self._buffer.transform(
-                    pose_s, target_frame, rospy.Time.now()
-                )
-                transformed_grasps.orbital_poses.append(tf_orbital_pose.pose)
-            except (
-                tf2_ros.LookupException,
-                tf2_ros.ConnectivityException,
-                tf2_ros.ExtrapolationException,
-            ):
-                rospy.logwarn(f"Failed to transform pose to {target_frame}")
-        return transformed_grasps
 
 
 def se3_dist(pose_1, pose_2):

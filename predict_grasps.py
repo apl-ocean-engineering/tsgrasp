@@ -11,17 +11,13 @@ but seems to increase memory usage and can result in OOM errors.
 """
 
 # Standard Library
-import copy
 import os
 import warnings
-from typing import List
+from typing import List, Tuple
 
 import numpy as np
-import ros_numpy
 import rospkg
-import rospy
 import torch
-from geometry_msgs.msg import Point, Pose
 
 # Third-party
 from kornia.geometry.conversions import (
@@ -30,10 +26,9 @@ from kornia.geometry.conversions import (
 )
 from omegaconf import OmegaConf
 from pytorch3d.ops import sample_farthest_points
-from sensor_msgs.msg import PointCloud2
-
-from grasp_synthesis.tsgrasp.tsgrasp.net.lit_tsgraspnet import LitTSGraspNet
-from grasp_synthesis.tsgrasp.tsgrasp_utils import (
+from tsgrasp_utils import (
+    PyGrasps,
+    PyPose,
     bound_point_cloud_world,
     build_6dof_grasps,
     downsample_xyz,
@@ -44,7 +39,8 @@ from grasp_synthesis.tsgrasp.tsgrasp_utils import (
     quaternion_to_rotation_matrix,
     transform_to_camera_frame,
 )
-from raven_manip_msgs.msg import BoundingBox3D, Grasps
+
+from .tsgrasp.net.lit_tsgraspnet import LitTSGraspNet
 
 # Initialize the ROS package manager
 rospack = rospkg.RosPack()
@@ -59,7 +55,7 @@ class GraspPredictor:
     Node implementing tsgrasp network
     """
 
-    def __init__(self, yaml_file_path, tf_helper) -> None:
+    def __init__(self, yaml_file_path) -> None:
         self.device = torch.device("cuda")
         # Load metadata from yaml file:
         model_metadata = model_metadata_from_yaml(
@@ -83,8 +79,6 @@ class GraspPredictor:
         self.world_bounds = torch.Tensor([[0, -0.4, 0.15], [2, -0.05, 2]]).to(
             self.device
         )
-        self.tf_helper = tf_helper
-        self.latest_header = None
 
         try:
             model_path = os.path.join(pkg_root, model_metadata["ckpt_path"])
@@ -118,78 +112,52 @@ class GraspPredictor:
         self.pl_model.to(self.device)
         self.pl_model.eval()
 
-    def update_bounds(self, bounds_msg: BoundingBox3D):
+    def update_bounds(self, min_pt: np.array, max_pt: np.array):
         """
-        Updates the bounding box based on a bounds_msg from object_detection
+        Updates the bounding box for detection
 
         Args:
-            bounds_msg (BoundingBox3D): _description_
+            min_pt (np.array): [min_x, min_y, min_z]
+            max_pt (np.array): [max_x, max_y, max_z]
         """
-        if bounds_msg is None:
-            return
-        tf = self.tf_helper.get_transform(bounds_msg.header.frame_id, "world")
-        tf_matrix = ros_numpy.numpify(tf.transform)
-
-        center = [
-            bounds_msg.center.position.x,
-            bounds_msg.center.position.y,
-            bounds_msg.center.position.z,
-        ]
-
-        tf_center_pt = tf_matrix @ np.hstack((center, 1))
-
-        size = [bounds_msg.size.x, bounds_msg.size.y, bounds_msg.size.z]
-
-        # Calculate min and max points
-        min_pt = np.array([tf_center_pt[i] - size[i] / 2 for i in range(3)])
-        max_pt = np.array([tf_center_pt[i] + size[i] / 2 for i in range(3)])
-
-        # To avoid getting the table in bounds, we crop out the bottom of the box in the z dim
-        min_pt[2] = tf_center_pt[2] - 0.75 * (size[2] / 2)
-        if min_pt[2] <= 0.16:
-            min_pt[2] = 0.16
 
         self.world_bounds = torch.Tensor(np.vstack((min_pt[:3], max_pt[:3]))).to(
             self.device
         )
 
     @torch.inference_mode()
-    def detect(self, pc_msg: PointCloud2, bounds_msg: BoundingBox3D):
+    def detect(
+        self,
+        pointcloud: np.array,
+        cam_transform: np.array,
+        bounds_min: np.array,
+        bounds_max: np.array,
+    ) -> Tuple[PyGrasps, np.array]:
         """
         Run grasp prediction on a single input
 
         Args:
             pc_msg (PointCloud2): _description_
-            bounds_msg (BoundingBox3D): _description_
+            bounds_min (BoundingBox3D): _description_
+            bounds_max (np.array)
 
         Returns:
             (grasp_msg, pc_conf_msg) (Grasps, PointCloud2): Tuple of grasps and point cloud of confidence
         """
-        # First update the bounds from the msg
-        self.update_bounds(bounds_msg)
+        # First update the bounds
+        self.update_bounds(bounds_min, bounds_max)
 
-        cam_tf = self.tf_helper.get_transform(pc_msg.header.frame_id, "world")
-        cam_tf = torch.Tensor(ros_numpy.numpify(cam_tf.transform))
-        q = [(pc_msg, cam_tf)]
+        q = [(pointcloud, torch.Tensor(cam_transform))]
         try:
-            msgs, poses = list(zip(*q))
+            orig_pts, poses = list(zip(*q))
             pts = [
-                ros_numpy.point_cloud2.pointcloud2_to_xyz_array(
-                    msg, remove_nans=False
-                ).reshape(-1, 3)
-                for msg in msgs
-            ]
-
-            pts = [
-                torch.from_numpy(pt.astype(np.float32)).to(self.device) for pt in pts
+                torch.from_numpy(pt.astype(np.float32)).to(self.device)
+                for pt in orig_pts
             ]
             poses = torch.Tensor(np.stack(poses)).to(self.device, non_blocking=True)
         except ValueError as ex:
-            print(ex)
-            print("Is this error because there are fewer than 300x300 points?")
+            print(f"Is this error because there are fewer than 300x300 points? - {ex}")
             return None, None
-
-        self.latest_header = msgs[-1].header
 
         pts = downsample_xyz(pts, self.pts_per_frame)
         if pts is None or any(len(pcl) == 0 for pcl in pts):
@@ -201,7 +169,7 @@ class GraspPredictor:
 
         pts = transform_to_camera_frame(pts, poses)
         if pts is None or any(len(pcl) < 2 for pcl in pts):
-            return  # bug with length-one pcs
+            return None, None  # bug with length-one pcs
 
         grasps, confs, widths = self.identify_grasps(pts)
         all_confs = confs.clone()  # keep the pointwise confs for plotting later
@@ -213,12 +181,12 @@ class GraspPredictor:
         try:
             grasps = self.ensure_grasp_y_axis_upward(grasps)
             grasps = self.transform_to_eq_pose(grasps)
-            grasp_msg = self.generate_grasp_msg(grasps, confs, widths)
-            pc_conf_msg = self.generate_pc_msg(pts, all_confs)
-            return grasp_msg, pc_conf_msg
+            grasps_data = self.generate_grasps(grasps, confs, widths)
+            pc_confidence_data = self.generate_pc_data(pts, all_confs)
+            return grasps_data, pc_confidence_data
 
         except RuntimeError as ex:
-            rospy.logwarn(f"Encountered Runtime Error! {ex}")
+            print(f"Encountered Runtime Error! {ex}")
             return None, None
 
     def identify_grasps(self, pts):
@@ -367,7 +335,7 @@ class GraspPredictor:
         ).to(poses.device)
         return poses @ tf
 
-    def get_orbital_pose(self, poses: List[Pose]) -> List[Pose]:
+    def get_orbital_pose(self, poses: List[PyPose]) -> List[PyPose]:
         """
         Generates a orbital pose from an offset.
 
@@ -397,20 +365,13 @@ class GraspPredictor:
             )
             z_hat = rot_matrix[:, 2]
             pos = pos - z_hat * self.offset_distance
-
-            o_pos = Point()
-            o_pos.x, o_pos.y, o_pos.z = pos
-
-            o_pose = Pose()
-            o_pose.position = o_pos
-            o_pose.orientation = pose.orientation
-
+            o_pose = PyPose(position=pos, orientation=pose.orientation)
             orbital_poses.append(o_pose)
         return orbital_poses
 
-    def generate_grasp_msg(self, grasps, confs, widths):
+    def generate_grasps(self, grasps, confs, widths) -> PyGrasps:
         """
-        Publish the resulting grasps
+        Get grasps as dataclass
 
         Args:
             grasps (torch.Tensor):
@@ -427,24 +388,15 @@ class GraspPredictor:
         )
         vs = grasps[:, :3, 3].cpu().numpy()
 
-        def q_v_to_pose(q, v):
-            p = Pose()
-            p.position.x, p.position.y, p.position.z = v
-            (p.orientation.x, p.orientation.y, p.orientation.z, p.orientation.w) = q
-            return p
-
-        grasps_msg = Grasps()
-        grasps_msg.poses = [q_v_to_pose(q, v) for q, v in zip(qs, vs)]
-        grasps_msg.orbital_poses = self.get_orbital_pose(grasps_msg.poses)
-        grasps_msg.confs = confs.tolist()
-        grasps_msg.widths = widths.tolist()
-        grasps_msg.header = copy.copy(self.latest_header)
+        poses = [PyPose(position=v, orientation=q) for q, v in zip(qs, vs)]
+        orbital_poses = self.get_orbital_pose(poses)
+        grasps_msg = PyGrasps(poses, orbital_poses, confs.tolist(), widths.tolist())
 
         return grasps_msg
 
-    def generate_pc_msg(self, pts, all_confs):
+    def generate_pc_data(self, pts, all_confs) -> np.array:
         """
-        Publishes a point cloud of the grasps with confidences colormapped
+        Returns point cloud of the grasps with confidences colormapped
 
         Args:
             pts (torch.Tensor): x, y, z points
@@ -477,8 +429,4 @@ class GraspPredictor:
         points_arr["g"] = colors[:, 1]
         points_arr["b"] = colors[:, 2]
         points_arr["a"] = colors[:, 3]
-
-        cloud_msg = ros_numpy.msgify(PointCloud2, points_arr)
-        cloud_msg.header = self.latest_header
-        # self.pcl_pub.publish(cloud_msg)
-        return cloud_msg
+        return points_arr
