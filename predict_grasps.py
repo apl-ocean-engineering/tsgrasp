@@ -13,7 +13,7 @@ but seems to increase memory usage and can result in OOM errors.
 # Standard Library
 import os
 import warnings
-from typing import List, Tuple
+from typing import List, Optional, Tuple
 
 import numpy as np
 import rospkg
@@ -26,7 +26,10 @@ from kornia.geometry.conversions import (
 )
 from omegaconf import OmegaConf
 from pytorch3d.ops import sample_farthest_points
-from tsgrasp_utils import (
+from scipy.spatial.transform import Rotation
+
+from .tsgrasp.net.lit_tsgraspnet import LitTSGraspNet
+from .tsgrasp_utils import (
     PyGrasps,
     PyPose,
     bound_point_cloud_world,
@@ -36,11 +39,8 @@ from tsgrasp_utils import (
     generate_color_lookup,
     infer_grasps,
     model_metadata_from_yaml,
-    quaternion_to_rotation_matrix,
     transform_to_camera_frame,
 )
-
-from .tsgrasp.net.lit_tsgraspnet import LitTSGraspNet
 
 # Initialize the ROS package manager
 rospack = rospkg.RosPack()
@@ -132,7 +132,7 @@ class GraspPredictor:
         cam_transform: np.array,
         bounds_min: np.array,
         bounds_max: np.array,
-    ) -> Tuple[PyGrasps, np.array]:
+    ):
         """
         Run grasp prediction on a single input
 
@@ -348,21 +348,8 @@ class GraspPredictor:
         """
         orbital_poses = []
         for pose in poses:
-            pos = np.array(
-                [
-                    pose.position.x,
-                    pose.position.y,
-                    pose.position.z,
-                ]
-            )
-            rot_matrix = quaternion_to_rotation_matrix(
-                [
-                    pose.orientation.x,
-                    pose.orientation.y,
-                    pose.orientation.z,
-                    pose.orientation.w,
-                ]
-            )
+            pos = np.array(pose.position)
+            rot_matrix = Rotation.from_quat(pose.orientation).as_matrix()
             z_hat = rot_matrix[:, 2]
             pos = pos - z_hat * self.offset_distance
             o_pose = PyPose(position=pos, orientation=pose.orientation)
