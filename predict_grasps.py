@@ -55,7 +55,7 @@ class GraspPredictor:
     Node implementing tsgrasp network
     """
 
-    def __init__(self, yaml_file_path) -> None:
+    def __init__(self, yaml_file_path: str, verbose: bool) -> None:
         self.device = torch.device("cuda")
         # Load metadata from yaml file:
         model_metadata = model_metadata_from_yaml(
@@ -79,6 +79,7 @@ class GraspPredictor:
         self.world_bounds = torch.Tensor([[0, -0.4, 0.15], [2, -0.05, 2]]).to(
             self.device
         )
+        self.verbose = verbose
 
         try:
             model_path = os.path.join(pkg_root, model_metadata["ckpt_path"])
@@ -130,22 +131,24 @@ class GraspPredictor:
         self,
         pointcloud: np.array,
         cam_transform: np.array,
-        bounds_min: np.array,
-        bounds_max: np.array,
+        bounds_min: Optional[np.array] = None,
+        bounds_max: Optional[np.array] = None,
     ):
         """
         Run grasp prediction on a single input
 
         Args:
-            pc_msg (PointCloud2): _description_
-            bounds_min (BoundingBox3D): _description_
-            bounds_max (np.array)
+            pointcloud (np.array): _description_
+            cam_transform (np.array): _description_
+            bounds_min (Optional[np.array]): _description_
+            bounds_max (Optional[np.array]): _description_
 
         Returns:
-            (grasp_msg, pc_conf_msg) (Grasps, PointCloud2): Tuple of grasps and point cloud of confidence
+            _type_: _description_
         """
         # First update the bounds
-        self.update_bounds(bounds_min, bounds_max)
+        if bounds_min is not None and bounds_max is not None:
+            self.update_bounds(bounds_min, bounds_max)
 
         q = [(pointcloud, torch.Tensor(cam_transform))]
         try:
@@ -161,14 +164,20 @@ class GraspPredictor:
 
         pts = downsample_xyz(pts, self.pts_per_frame)
         if pts is None or any(len(pcl) == 0 for pcl in pts):
+            if self.verbose:
+                print("No points found after downsampling!")
             return None, None
 
         pts = bound_point_cloud_world(pts, poses, self.world_bounds)
         if pts is None or any(len(pcl) == 0 for pcl in pts):
+            if self.verbose:
+                print("No points found after bound_point_cloud_world!")
             return None, None
 
         pts = transform_to_camera_frame(pts, poses)
         if pts is None or any(len(pcl) < 2 for pcl in pts):
+            if self.verbose:
+                print("No points found after transform_to_camera_frame!")
             return None, None  # bug with length-one pcs
 
         grasps, confs, widths = self.identify_grasps(pts)
@@ -177,7 +186,10 @@ class GraspPredictor:
         grasps, confs, widths = self.filter_grasps(grasps, confs, widths)
 
         if grasps is None:
+            if self.verbose:
+                print("No points found after filter_grasps!")
             return None, None
+
         try:
             grasps = self.ensure_grasp_y_axis_upward(grasps)
             grasps = self.transform_to_eq_pose(grasps)

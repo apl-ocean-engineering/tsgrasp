@@ -262,7 +262,6 @@ def bound_point_cloud_world(
 
     # ensure nonzero
     if sum(len(pt) for pt in pts) == 0:
-        # print("No points in bounds")
         return None
 
     return pts
