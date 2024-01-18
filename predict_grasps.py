@@ -113,7 +113,7 @@ class GraspPredictor:
         self.pl_model.to(self.device)
         self.pl_model.eval()
 
-    def update_bounds(self, min_pt: np.array, max_pt: np.array):
+    def update_bounds(self, min_pt, max_pt):
         """
         Updates the bounding box for detection
 
@@ -121,18 +121,20 @@ class GraspPredictor:
             min_pt (np.array): [min_x, min_y, min_z]
             max_pt (np.array): [max_x, max_y, max_z]
         """
-
-        self.world_bounds = torch.Tensor(np.vstack((min_pt[:3], max_pt[:3]))).to(
-            self.device
-        )
+        if min_pt is None or max_pt is None:
+            pass
+        else:
+            self.world_bounds = torch.Tensor(np.vstack((min_pt[:3], max_pt[:3]))).to(
+                self.device
+            )
 
     @torch.inference_mode()
     def detect(
         self,
         pointcloud: np.array,
         cam_transform: np.array,
-        bounds_min: Optional[np.array] = None,
-        bounds_max: Optional[np.array] = None,
+        bounds_min=None,
+        bounds_max=None,
     ):
         """
         Run grasp prediction on a single input
