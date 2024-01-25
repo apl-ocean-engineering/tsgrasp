@@ -165,53 +165,6 @@ def eul_to_rotm(roll: float, pitch: float, yaw: float) -> np.array:
 
 
 # @torch.jit.script
-def inverse_homo(transform: torch.Tensor) -> torch.Tensor:
-    """
-    Compute inverse of homogeneous transformation matrix.
-
-    The matrix should have entries
-    [[R,       Rt]
-     [0, 0, 0, 1]].
-
-    Args:
-        transform (torch.Tensor): _description_
-
-    Returns:
-        inverse_mat (torch.Tensor): inverse homography
-    """
-    rotation = transform[0:3, 0:3]
-    trans = rotation.T @ transform[0:3, 3].reshape(3, 1)
-    inverse_mat = torch.cat(
-        [
-            torch.cat([rotation.T, -trans], dim=1),
-            torch.tensor([[0, 0, 0, 1]]).to(rotation.device),
-        ],
-        dim=0,
-    )
-
-    return inverse_mat
-
-
-def transform_to_camera_frame(pts: torch.Tensor, poses: torch.Tensor) -> torch.Tensor:
-    """
-    Transform all point clouds into the frame of the most recent image
-
-    Args:
-        pts (torch.Tensor): points
-        poses (torch.Tensor): poses
-
-    Returns:
-        pts (torch.Tensor): points, transformed
-    """
-    tf_i_to_n = inverse_homo(poses[-1]) @ poses
-    pts = [
-        transform_vec(pts[i].unsqueeze(0), tf_i_to_n[i].unsqueeze(0))[0]
-        for i in range(len(pts))
-    ]
-    return pts
-
-
-# @torch.jit.script
 def downsample_xyz(pts: List[torch.Tensor], pts_per_frame: int) -> List[torch.Tensor]:
     """
     Downsample point clouds proportion of points.
@@ -237,65 +190,6 @@ def downsample_xyz(pts: List[torch.Tensor], pts_per_frame: int) -> List[torch.Te
         pts[i] = pts[i][idxs]
 
     return pts
-
-
-def bound_point_cloud_world(pts: torch.Tensor, world_bounds: torch.Tensor):
-    """
-    Bound the point cloud in the world frame.
-
-    Args:
-        pts (torch.Tensor): input points
-        poses (torch.Tensor): input poses
-        world_bounds (torch.Tensor): input world bounds
-
-    Returns:
-        pts (torch.Tensor): Cropped points based on bounds
-    """
-    for i in range(len(pts)):
-        # world_pc = transform_vec(pts[i].unsqueeze(0), pose.unsqueeze(0))[0]
-        valid = torch.all(pts[i] >= world_bounds[0], dim=1) & torch.all(
-            pts[i] <= world_bounds[1], dim=1
-        )
-        pts[i] = pts[i][valid]
-
-    # ensure nonzero
-    if sum(len(pt) for pt in pts) == 0:
-        return None
-
-    return pts
-
-
-def transform_vec(x_vec: torch.Tensor, transform: torch.Tensor) -> torch.Tensor:
-    """Transform 3D vector `x_vec` by homogenous transformation `tf`.
-
-    Args:
-        x (torch.Tensor): (b, ..., 3) coordinates in R3
-        tf (torch.Tensor): (b, 4, 4) homogeneous pose matrix
-
-    Returns:
-        torch.Tensor: (b, ..., 3) coordinates of transformed vectors.
-    """
-
-    x_dim = len(x_vec.shape)
-    assert all(
-        (
-            len(transform.shape) == 3,  # tf must be (b, 4, 4)
-            transform.shape[1:] == (4, 4),  # tf must be (b, 4, 4)
-            transform.shape[0] == x_vec.shape[0],  # batch dimension must be same
-            x_dim > 2,  # x must be a batched matrix/tensor
-        )
-    ), "Argument shapes are unsupported."
-
-    x_homog = torch.cat(
-        [x_vec, torch.ones(*x_vec.shape[:-1], 1, device=x_vec.device)], dim=-1
-    )
-
-    # Pad the dimension of tf for broadcasting.
-    # E.g., if x had shape (2, 3, 7, 3), and tf had shape (2, 4, 4), then
-    # we reshape tf to (2, 1, 1, 4, 4)
-    transform = transform.reshape(transform.shape[0], *([1] * (x_dim - 3)), 4, 4)
-
-    return (x_homog @ transform.transpose(-2, -1))[..., :3]
 
 
 # @torch.jit.script
