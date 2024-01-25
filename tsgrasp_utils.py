@@ -239,9 +239,7 @@ def downsample_xyz(pts: List[torch.Tensor], pts_per_frame: int) -> List[torch.Te
     return pts
 
 
-def bound_point_cloud_world(
-    pts: torch.Tensor, poses: torch.Tensor, world_bounds: torch.Tensor
-):
+def bound_point_cloud_world(pts: torch.Tensor, world_bounds: torch.Tensor):
     """
     Bound the point cloud in the world frame.
 
@@ -253,10 +251,10 @@ def bound_point_cloud_world(
     Returns:
         pts (torch.Tensor): Cropped points based on bounds
     """
-    for i, pose in zip(range(len(pts)), poses):
-        world_pc = transform_vec(pts[i].unsqueeze(0), pose.unsqueeze(0))[0]
-        valid = torch.all(world_pc >= world_bounds[0], dim=1) & torch.all(
-            world_pc <= world_bounds[1], dim=1
+    for i in range(len(pts)):
+        # world_pc = transform_vec(pts[i].unsqueeze(0), pose.unsqueeze(0))[0]
+        valid = torch.all(pts[i] >= world_bounds[0], dim=1) & torch.all(
+            pts[i] <= world_bounds[1], dim=1
         )
         pts[i] = pts[i][valid]
 

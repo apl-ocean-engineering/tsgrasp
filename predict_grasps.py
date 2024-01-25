@@ -32,14 +32,12 @@ from .tsgrasp.net.lit_tsgraspnet import LitTSGraspNet
 from .tsgrasp_utils import (
     PyGrasps,
     PyPose,
-    bound_point_cloud_world,
     build_6dof_grasps,
     downsample_xyz,
     eul_to_rotm,
     generate_color_lookup,
     infer_grasps,
     model_metadata_from_yaml,
-    transform_to_camera_frame,
 )
 
 # Initialize the ROS package manager
@@ -132,55 +130,58 @@ class GraspPredictor:
     def detect(
         self,
         pointcloud: np.array,
-        cam_transform: np.array,
-        bounds_min=None,
-        bounds_max=None,
-    ):
+        bounds_min: Optional[np.array] = None,
+        bounds_max: Optional[np.array] = None,
+    ) -> Optional[Tuple]:
         """
         Run grasp prediction on a single input
 
         Args:
             pointcloud (np.array): _description_
             cam_transform (np.array): _description_
-            bounds_min (Optional[np.array]): _description_
-            bounds_max (Optional[np.array]): _description_
+            bounds_min (Optional[np.array]): bounds minimum to search (x, y, z)
+            bounds_max (Optional[np.array]): bounds maximum to search (x, y, z)
 
         Returns:
             _type_: _description_
         """
+        grasps_data: Optional[PyGrasps] = None
+        pc_confidence_data: Optional[np.array] = None
+
         # First update the bounds
         if bounds_min is not None and bounds_max is not None:
             self.update_bounds(bounds_min, bounds_max)
 
-        q = [(pointcloud, torch.Tensor(cam_transform))]
+        # q = [(pointcloud, torch.Tensor(cam_transform))]
         try:
-            orig_pts, poses = list(zip(*q))
+            orig_pts = [pointcloud]
             pts = [
                 torch.from_numpy(pt.astype(np.float32)).to(self.device)
                 for pt in orig_pts
             ]
-            poses = torch.Tensor(np.stack(poses)).to(self.device, non_blocking=True)
+
+            # poses = torch.Tensor(np.stack(poses)).to(self.device, non_blocking=True)
         except ValueError as ex:
             print(f"Is this error because there are fewer than 300x300 points? - {ex}")
-            return None, None
+            return (None, None)
 
         pts = downsample_xyz(pts, self.pts_per_frame)
         if pts is None or any(len(pcl) == 0 for pcl in pts):
             if self.verbose:
                 print("No points found after downsampling!")
-            return None, None
+            return (None, None)
 
-        pts = bound_point_cloud_world(pts, poses, self.world_bounds)
+        pts = self.bound_point_cloud_world(pts)
         if pts is None or any(len(pcl) == 0 for pcl in pts):
             if self.verbose:
                 print("No points found after bound_point_cloud_world!")
-            return None, None
+            return (None, None)
 
-        pts = transform_to_camera_frame(pts, poses)
-        if pts is None or any(len(pcl) < 2 for pcl in pts):
-            if self.verbose:
-                print("No points found after transform_to_camera_frame!")
-            return None, None  # bug with length-one pcs
+        # pts = transform_to_camera_frame(pts, poses)
+        # if pts is None or any(len(pcl) < 2 for pcl in pts):
+        #     if self.verbose:
+        #         print("No points found after transform_to_camera_frame!")
+        #     return (None, None)  # bug with length-one pcs
 
         grasps, confs, widths = self.identify_grasps(pts)
         all_confs = confs.clone()  # keep the pointwise confs for plotting later
@@ -190,7 +191,7 @@ class GraspPredictor:
         if grasps is None:
             if self.verbose:
                 print("No points found after filter_grasps!")
-            return None, None
+            return (None, None)
 
         try:
             grasps = self.ensure_grasp_y_axis_upward(grasps)
@@ -201,7 +202,7 @@ class GraspPredictor:
 
         except RuntimeError as ex:
             print(f"Encountered Runtime Error! {ex}")
-            return None, None
+            return (None, None)
 
     def identify_grasps(self, pts):
         """
@@ -233,6 +234,19 @@ class GraspPredictor:
         except Exception as ex:
             print(f"{ex}")
             return None, None, None
+
+    def bound_point_cloud_world(self, pts):
+        for i in range(len(pts)):
+            valid = torch.all(pts[i] >= self.world_bounds[0], dim=1) & torch.all(
+                pts[i] <= self.world_bounds[1], dim=1
+            )
+            pts[i] = pts[i][valid]
+
+        # ensure nonzero
+        if sum(len(pt) for pt in pts) == 0:
+            return None
+
+        return pts
 
     def filter_grasps(self, grasps, confs, widths):
         """
