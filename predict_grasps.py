@@ -30,6 +30,7 @@ from scipy.spatial.transform import Rotation
 
 from .tsgrasp.net.lit_tsgraspnet import LitTSGraspNet
 from .tsgrasp_utils import (
+    PyGrasp,
     PyGrasps,
     PyPose,
     build_6dof_grasps,
@@ -72,11 +73,11 @@ class GraspPredictor:
         self.top_k = 500
         self.outlier_threshold = 0.00005
         self.pts_per_frame = 45000
-        self.bounds_min = [0, -0.4, 0.15]
-        self.bounds_max = [2, -0.05, 2]
-        self.world_bounds = torch.Tensor([[0, -0.4, 0.15], [2, -0.05, 2]]).to(
-            self.device
-        )
+        # self.bounds_min = [0, -0.4, 0.15]
+        # self.bounds_max = [2, -0.05, 2]
+        # self.world_bounds = torch.Tensor([[0, -0.4, 0.15], [2, -0.05, 2]]).to(
+        #     self.device
+        # )
         self.verbose = verbose
 
         try:
@@ -111,46 +112,38 @@ class GraspPredictor:
         self.pl_model.to(self.device)
         self.pl_model.eval()
 
-    def update_bounds(self, min_pt, max_pt):
-        """
-        Updates the bounding box for detection
+    # def update_bounds(self, min_pt, max_pt):
+    #     """
+    #     Updates the bounding box for detection
 
-        Args:
-            min_pt (np.array): [min_x, min_y, min_z]
-            max_pt (np.array): [max_x, max_y, max_z]
-        """
-        if min_pt is None or max_pt is None:
-            pass
-        else:
-            self.world_bounds = torch.Tensor(np.vstack((min_pt[:3], max_pt[:3]))).to(
-                self.device
-            )
+    #     Args:
+    #         min_pt (np.array): [min_x, min_y, min_z]
+    #         max_pt (np.array): [max_x, max_y, max_z]
+    #     """
+    #     if min_pt is None or max_pt is None:
+    #         pass
+    #     else:
+    #         self.world_bounds = torch.Tensor(np.vstack((min_pt[:3], max_pt[:3]))).to(
+    #             self.device
+    #         )
 
     @torch.inference_mode()
-    def detect(
-        self,
-        pointcloud: np.array,
-        bounds_min: Optional[np.array] = None,
-        bounds_max: Optional[np.array] = None,
-    ) -> Optional[Tuple]:
+    def detect(self, pointcloud: np.array) -> Optional[Tuple]:
         """
         Run grasp prediction on a single input
 
         Args:
-            pointcloud (np.array): _description_
-            cam_transform (np.array): _description_
-            bounds_min (Optional[np.array]): bounds minimum to search (x, y, z)
-            bounds_max (Optional[np.array]): bounds maximum to search (x, y, z)
+            pointcloud (np.array): input pointcloud
 
         Returns:
-            _type_: _description_
+            Tuple(PyGrasps, np.array): Tuple of PyGrasps and a heatmap pointcloud (np.array)
         """
         grasps_data: Optional[PyGrasps] = None
         pc_confidence_data: Optional[np.array] = None
 
         # First update the bounds
-        if bounds_min is not None and bounds_max is not None:
-            self.update_bounds(bounds_min, bounds_max)
+        # if bounds_min is not None and bounds_max is not None:
+        #     self.update_bounds(bounds_min, bounds_max)
 
         # q = [(pointcloud, torch.Tensor(cam_transform))]
         try:
@@ -171,17 +164,11 @@ class GraspPredictor:
                 print("No points found after downsampling!")
             return (None, None)
 
-        pts = self.bound_point_cloud_world(pts)
-        if pts is None or any(len(pcl) == 0 for pcl in pts):
-            if self.verbose:
-                print("No points found after bound_point_cloud_world!")
-            return (None, None)
-
-        # pts = transform_to_camera_frame(pts, poses)
-        # if pts is None or any(len(pcl) < 2 for pcl in pts):
+        # pts = self.bound_point_cloud_world(pts)
+        # if pts is None or any(len(pcl) == 0 for pcl in pts):
         #     if self.verbose:
-        #         print("No points found after transform_to_camera_frame!")
-        #     return (None, None)  # bug with length-one pcs
+        #         print("No points found after bound_point_cloud_world!")
+        #     return (None, None)
 
         grasps, confs, widths = self.identify_grasps(pts)
         all_confs = confs.clone()  # keep the pointwise confs for plotting later
@@ -235,18 +222,18 @@ class GraspPredictor:
             print(f"{ex}")
             return None, None, None
 
-    def bound_point_cloud_world(self, pts):
-        for i in range(len(pts)):
-            valid = torch.all(pts[i] >= self.world_bounds[0], dim=1) & torch.all(
-                pts[i] <= self.world_bounds[1], dim=1
-            )
-            pts[i] = pts[i][valid]
+    # def bound_point_cloud_world(self, pts):
+    #     for i in range(len(pts)):
+    #         valid = torch.all(pts[i] >= self.world_bounds[0], dim=1) & torch.all(
+    #             pts[i] <= self.world_bounds[1], dim=1
+    #         )
+    #         pts[i] = pts[i][valid]
 
-        # ensure nonzero
-        if sum(len(pt) for pt in pts) == 0:
-            return None
+    #     # ensure nonzero
+    #     if sum(len(pt) for pt in pts) == 0:
+    #         return None
 
-        return pts
+    #     return pts
 
     def filter_grasps(self, grasps, confs, widths):
         """
@@ -363,7 +350,7 @@ class GraspPredictor:
         ).to(poses.device)
         return poses @ tf
 
-    def get_orbital_pose(self, poses: List[PyPose]) -> List[PyPose]:
+    def get_orbital_poses(self, poses: List[PyPose]) -> List[PyPose]:
         """
         Generates a orbital pose from an offset.
 
@@ -384,6 +371,23 @@ class GraspPredictor:
             orbital_poses.append(o_pose)
         return orbital_poses
 
+    def get_orbital_pose(self, pose: PyPose) -> PyPose:
+        """
+        Generates a single orbital pose from an input pose.
+
+
+        Args:
+            poses (Pose): Input grasps (poses)
+
+        Returns:
+            Pose: Offset poses
+        """
+        pos = np.array(pose.position)
+        rot_matrix = Rotation.from_quat(pose.orientation).as_matrix()
+        z_hat = rot_matrix[:, 2]
+        pos = pos - z_hat * self.offset_distance
+        return PyPose(position=pos, orientation=pose.orientation)
+
     def generate_grasps(self, grasps, confs, widths) -> PyGrasps:
         """
         Get grasps as dataclass
@@ -394,20 +398,29 @@ class GraspPredictor:
             widths (torch.Tensor):
 
         """
-        qs = (
+        quats = (
             rotation_matrix_to_quaternion(
                 grasps[:, :3, :3].contiguous(), order=QuaternionCoeffOrder.XYZW
             )
             .cpu()
             .numpy()
         )
-        vs = grasps[:, :3, 3].cpu().numpy()
+        positions = grasps[:, :3, 3].cpu().numpy()
 
-        poses = [PyPose(position=v, orientation=q) for q, v in zip(qs, vs)]
-        orbital_poses = self.get_orbital_pose(poses)
-        grasps_msg = PyGrasps(poses, orbital_poses, confs.tolist(), widths.tolist())
+        pygrasp_list = []
 
-        return grasps_msg
+        for quat, pos, conf, width in zip(
+            quats, positions, confs.tolist(), widths.tolist()
+        ):
+            pose = PyPose(position=pos, orientation=quat)
+            offset_pose = self.get_orbital_pose(pose)
+            pygrasp_list.append(PyGrasp(pose, offset_pose, conf, width))
+
+        # poses = [PyPose(position=v, orientation=q) for q, v in zip(qs, vs)]
+        # orbital_poses = self.get_orbital_pose(poses)
+        # grasps_msg = PyGrasps(poses, orbital_poses, confs.tolist(), widths.tolist())
+
+        return PyGrasps(grasps=pygrasp_list)
 
     def generate_pc_data(self, pts, all_confs) -> np.array:
         """

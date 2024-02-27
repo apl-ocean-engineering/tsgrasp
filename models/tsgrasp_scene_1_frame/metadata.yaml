@@ -33,8 +33,8 @@ model:
 # ROS Specific Parameters
 ckpt_path: src/grasp_synthesis/tsgrasp/models/tsgrasp_scene_1_frame/model.ckpt # relative to pkg_root
 world_bounds_topic: /point_cloud_cropper/bounding_box
-# pc_topic: /zed/zed_node/point_cloud/cloud_registered
-pc_topic: /raven/stereo/downsampled/points2
+pc_topic: /point_cloud_cropper/cropped_pc
+# pc_topic: /raven/stereo/downsampled/points2
 confidence_threshold: 0.0
 gripper_depth: 0.090
 offset_distance: 0.10

@@ -4,6 +4,7 @@ Specific to tsgrasp as it imports Minkowski engine
 
 Author: Tim Player
 """
+
 # Standard library
 from dataclasses import dataclass
 from typing import List
@@ -27,15 +28,36 @@ class PyPose:
 
 
 @dataclass
+class PyGrasp:
+    """
+    Dataclass version of a raven_manip_msgs Grasp
+    """
+
+    pose: PyPose
+    offset_pose: PyPose
+    conf: float
+    width: float
+
+
+@dataclass
 class PyGrasps:
     """
     Dataclass version of a raven_manip_msgs Grasps
     """
 
-    poses: List[PyPose]
-    orbital_poses: List[PyPose]
-    confs: List[float]
-    widths: List[float]
+    grasps: List[PyGrasp]
+
+    def __len__(self):
+        """
+        Returns the length of the data .
+        """
+        return len(self.grasps)
+
+    def __iter__(self):
+        """
+        Returns an iterator over the grasps list.
+        """
+        return iter(self.grasps)
 
 
 def quaternion_to_rotation_matrix(quat: list) -> np.array:
