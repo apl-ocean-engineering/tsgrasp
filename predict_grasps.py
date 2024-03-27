@@ -16,7 +16,6 @@ import warnings
 from typing import List, Optional, Tuple
 
 import numpy as np
-import rospkg
 import torch
 
 # Third-party
@@ -38,12 +37,7 @@ from .tsgrasp_utils import (
     eul_to_rotm,
     generate_color_lookup,
     infer_grasps,
-    model_metadata_from_yaml,
 )
-
-# Initialize the ROS package manager
-rospack = rospkg.RosPack()
-pkg_root = rospack.get_path("grasp_synthesis")
 
 # Suppresses a userwarning from kornia
 warnings.filterwarnings("ignore", category=UserWarning)
@@ -54,12 +48,8 @@ class GraspPredictor:
     Node implementing tsgrasp network
     """
 
-    def __init__(self, yaml_file_path: str, verbose: bool) -> None:
+    def __init__(self, model_metadata: dict, verbose: bool, pkg_root: str) -> None:
         self.device = torch.device("cuda")
-        # Load metadata from yaml file:
-        model_metadata = model_metadata_from_yaml(
-            os.path.join(pkg_root, yaml_file_path)
-        )
 
         if model_metadata is None:
             print("No Metadata Loaded!")
