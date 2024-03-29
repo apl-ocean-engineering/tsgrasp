@@ -39,6 +39,6 @@ gripper_depth: 0.090
 offset_distance: 0.10
 downsample: 0.50
 queue_len: 1
-top_k: 200
+top_k: 500
 outlier_threshold: 0.00005
 pts_per_frame: 45000

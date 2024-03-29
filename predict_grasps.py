@@ -27,17 +27,30 @@ from omegaconf import OmegaConf
 from pytorch3d.ops import sample_farthest_points
 from scipy.spatial.transform import Rotation
 
-from .tsgrasp.net.lit_tsgraspnet import LitTSGraspNet
-from .tsgrasp_utils import (
-    PyGrasp,
-    PyGrasps,
-    PyPose,
-    build_6dof_grasps,
-    downsample_xyz,
-    eul_to_rotm,
-    generate_color_lookup,
-    infer_grasps,
-)
+try:
+    from .tsgrasp.net.lit_tsgraspnet import LitTSGraspNet
+    from .tsgrasp_utils import (
+        PyGrasp,
+        PyGrasps,
+        PyPose,
+        build_6dof_grasps,
+        downsample_xyz,
+        eul_to_rotm,
+        generate_color_lookup,
+        infer_grasps,
+    )
+except ImportError:
+    from tsgrasp.net.lit_tsgraspnet import LitTSGraspNet  # type: ignore
+    from tsgrasp_utils import (  # type: ignore
+        PyGrasp,
+        PyGrasps,
+        PyPose,
+        build_6dof_grasps,
+        downsample_xyz,
+        eul_to_rotm,
+        generate_color_lookup,
+        infer_grasps,
+    )
 
 # Suppresses a userwarning from kornia
 warnings.filterwarnings("ignore", category=UserWarning)
