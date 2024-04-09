@@ -13,3 +13,5 @@ ckpts/
 *.h5
 *.tar.gz
 *.ckpt
+**.npy
+**.ply
