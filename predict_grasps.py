@@ -193,19 +193,6 @@ class GraspPredictor:
             print(f"{ex}")
             return None, None, None
 
-    # def bound_point_cloud_world(self, pts):
-    #     for i in range(len(pts)):
-    #         valid = torch.all(pts[i] >= self.world_bounds[0], dim=1) & torch.all(
-    #             pts[i] <= self.world_bounds[1], dim=1
-    #         )
-    #         pts[i] = pts[i][valid]
-
-    #     # ensure nonzero
-    #     if sum(len(pt) for pt in pts) == 0:
-    #         return None
-
-    #     return pts
-
     def filter_grasps(self, grasps, confs, widths):
         """
         Initial filtering of grasps based on confidence_threshold
@@ -389,7 +376,7 @@ class GraspPredictor:
 
         return PyGrasps(grasps=pygrasp_list)
 
-    def generate_pc_data(self, pts, all_confs) -> np.array:
+    def generate_pc_data(self, pts, all_confs, downsample=2) -> np.array:
         """
         Returns point cloud of the grasps with confidences colormapped
 
@@ -398,7 +385,6 @@ class GraspPredictor:
             all_confs (torch.Tensor): float values for each grasp
         """
         cloud_points = pts[-1]
-        downsample = 4
 
         confs_downsampled = all_confs[::downsample].cpu().numpy()
         int_confs = np.round(confs_downsampled * 255).astype(np.uint8).squeeze()
