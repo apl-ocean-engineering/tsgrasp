@@ -27,17 +27,30 @@ from omegaconf import OmegaConf
 from pytorch3d.ops import sample_farthest_points
 from scipy.spatial.transform import Rotation
 
-from .tsgrasp.net.lit_tsgraspnet import LitTSGraspNet
-from .tsgrasp_utils import (
-    PyGrasp,
-    PyGrasps,
-    PyPose,
-    build_6dof_grasps,
-    downsample_xyz,
-    eul_to_rotm,
-    generate_color_lookup,
-    infer_grasps,
-)
+try:
+    from .tsgrasp.net.lit_tsgraspnet import LitTSGraspNet
+    from .tsgrasp_utils import (
+        PyGrasp,
+        PyGrasps,
+        PyPose,
+        build_6dof_grasps,
+        downsample_xyz,
+        eul_to_rotm,
+        generate_color_lookup,
+        infer_grasps,
+    )
+except ImportError:
+    from tsgrasp.net.lit_tsgraspnet import LitTSGraspNet  # type: ignore
+    from tsgrasp_utils import (  # type: ignore
+        PyGrasp,
+        PyGrasps,
+        PyPose,
+        build_6dof_grasps,
+        downsample_xyz,
+        eul_to_rotm,
+        generate_color_lookup,
+        infer_grasps,
+    )
 
 # Suppresses a userwarning from kornia
 warnings.filterwarnings("ignore", category=UserWarning)
@@ -179,19 +192,6 @@ class GraspPredictor:
         except Exception as ex:
             print(f"{ex}")
             return None, None, None
-
-    # def bound_point_cloud_world(self, pts):
-    #     for i in range(len(pts)):
-    #         valid = torch.all(pts[i] >= self.world_bounds[0], dim=1) & torch.all(
-    #             pts[i] <= self.world_bounds[1], dim=1
-    #         )
-    #         pts[i] = pts[i][valid]
-
-    #     # ensure nonzero
-    #     if sum(len(pt) for pt in pts) == 0:
-    #         return None
-
-    #     return pts
 
     def filter_grasps(self, grasps, confs, widths):
         """
@@ -376,7 +376,7 @@ class GraspPredictor:
 
         return PyGrasps(grasps=pygrasp_list)
 
-    def generate_pc_data(self, pts, all_confs) -> np.array:
+    def generate_pc_data(self, pts, all_confs, downsample=2) -> np.array:
         """
         Returns point cloud of the grasps with confidences colormapped
 
@@ -385,7 +385,6 @@ class GraspPredictor:
             all_confs (torch.Tensor): float values for each grasp
         """
         cloud_points = pts[-1]
-        downsample = 4
 
         confs_downsampled = all_confs[::downsample].cpu().numpy()
         int_confs = np.round(confs_downsampled * 255).astype(np.uint8).squeeze()
