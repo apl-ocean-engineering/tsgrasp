@@ -70,7 +70,7 @@ class GraspPredictor:
         # Default params, if not in metadata
         self.confidence_threshold = 0.0
         self.gripper_depth = 0.090
-        self.offset_distance = 0.10
+        self.offset_distance = 0.20
         self.downsample = 0.50
         self.queue_len = 1
         self.top_k = 500
