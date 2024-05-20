@@ -141,10 +141,9 @@ class GraspPredictor:
                 print("No points found after downsampling!")
             return (None, None)
 
-        grasps, confs, widths = self.identify_grasps(pts)
-        all_confs = confs.clone()  # keep the pointwise confs for plotting later
+        all_grasps, all_confs, all_widths = self.identify_grasps(pts)
 
-        grasps, confs, widths = self.filter_grasps(grasps, confs, widths)
+        grasps, confs, widths = self.filter_grasps(all_grasps, all_confs, all_widths)
 
         if grasps is None:
             if self.verbose:
@@ -155,7 +154,9 @@ class GraspPredictor:
             grasps = self.ensure_grasp_y_axis_upward(grasps)
             grasps = self.transform_to_eq_pose(grasps)
             grasps_data = self.generate_grasps(grasps, confs, widths)
-            pc_confidence_data = self.generate_pc_data(pts, all_confs)
+            pc_confidence_data = self.generate_pc_data(
+                pts, all_grasps, all_confs, all_widths
+            )
             return grasps_data, pc_confidence_data
 
         except RuntimeError as ex:
@@ -376,19 +377,26 @@ class GraspPredictor:
 
         return PyGrasps(grasps=pygrasp_list)
 
-    def generate_pc_data(self, pts, all_confs, downsample=2) -> np.array:
+    def generate_pc_data(self, pts, all_grasps, all_confs, all_widths) -> np.array:
         """
         Returns point cloud of the grasps with confidences colormapped
+        Also includes all the grasps and widths.
 
         Args:
             pts (torch.Tensor): x, y, z points
-            all_confs (torch.Tensor): float values for each grasp
+            all_grasps (torch.Tensor): 4x4 pose matrix for each grasp
+            all_confs (torch.Tensor): Confidence float values for each grasp
+            all_widths (torch.Tensor): Width float values for each grasp
         """
         cloud_points = pts[-1]
 
-        confs_downsampled = all_confs[::downsample].cpu().numpy()
+        skip_vals = int(1 / self.downsample)
+        confs_downsampled = all_confs[::skip_vals].cpu().numpy()
+        grasps_downsampled = all_grasps[::skip_vals, :, :].cpu().numpy()
+        widths_downsampled = all_widths[::skip_vals].cpu().numpy()
+
         int_confs = np.round(confs_downsampled * 255).astype(np.uint8).squeeze()
-        points_downsampled = cloud_points[::downsample].cpu().numpy()
+        points_downsampled = cloud_points[::skip_vals].cpu().numpy()
         colors = self.color_lookup[int_confs]
         npoints = len(points_downsampled)
         points_arr = np.zeros(
@@ -401,6 +409,9 @@ class GraspPredictor:
                 ("g", np.float32),
                 ("b", np.float32),
                 ("a", np.float32),
+                ("confidence", np.float32),
+                ("grasps", np.float32, (4, 4)),
+                ("widths", np.float32),
             ],
         )
         points_arr["x"] = points_downsampled[:, 0]
@@ -410,4 +421,7 @@ class GraspPredictor:
         points_arr["g"] = colors[:, 1]
         points_arr["b"] = colors[:, 2]
         points_arr["a"] = colors[:, 3]
+        points_arr["confidence"] = confs_downsampled[:, 0]
+        points_arr["grasps"] = grasps_downsampled
+        points_arr["widths"] = widths_downsampled[:, 0]
         return points_arr
