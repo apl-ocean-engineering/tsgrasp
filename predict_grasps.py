@@ -12,6 +12,7 @@ but seems to increase memory usage and can result in OOM errors.
 
 # Standard Library
 import os
+import time
 import warnings
 from typing import List, Optional, Tuple
 
@@ -41,10 +42,10 @@ try:
     )
 except ImportError:
     from tsgrasp.net.lit_tsgraspnet import LitTSGraspNet  # type: ignore
-    from tsgrasp_utils import (  # type: ignore
+    from tsgrasp_utils import PyPose  # type: ignore
+    from tsgrasp_utils import (
         PyGrasp,
         PyGrasps,
-        PyPose,
         build_6dof_grasps,
         downsample_xyz,
         eul_to_rotm,
@@ -70,7 +71,7 @@ class GraspPredictor:
         # Default params, if not in metadata
         self.confidence_threshold = 0.0
         self.gripper_depth = 0.090
-        self.offset_distance = 0.20
+        self.offset_distance = 0.10
         self.downsample = 0.50
         self.queue_len = 1
         self.top_k = 500
@@ -89,6 +90,7 @@ class GraspPredictor:
             self.downsample = model_metadata["downsample"]
             self.queue_len = model_metadata["queue_len"]
             self.top_k = model_metadata["top_k"]
+            self.do_top_k = model_metadata["do_top_k"]
             self.outlier_threshold = model_metadata["outlier_threshold"]
             self.pts_per_frame = model_metadata["pts_per_frame"]
             model_cfg = OmegaConf.create(model_metadata["model"]["model_cfg"])
@@ -143,7 +145,9 @@ class GraspPredictor:
 
         all_grasps, all_confs, all_widths = self.identify_grasps(pts)
 
-        grasps, confs, widths = self.filter_grasps(all_grasps, all_confs, all_widths)
+        grasps, confs, widths = self.filter_grasps(
+            all_grasps, all_confs, all_widths, self.do_top_k
+        )
 
         if grasps is None:
             if self.verbose:
@@ -153,7 +157,12 @@ class GraspPredictor:
         try:
             grasps = self.ensure_grasp_y_axis_upward(grasps)
             grasps = self.transform_to_eq_pose(grasps)
-            grasps_data = self.generate_grasps(grasps, confs, widths)
+            grasps_data = PyGrasps(
+                poses=grasps.cpu().numpy(),
+                confs=confs.cpu().numpy(),
+                widths=widths.cpu().numpy(),
+            )
+            # grasps_data = self.generate_grasps(grasps, confs, widths)
             pc_confidence_data = self.generate_pc_data(
                 pts, all_grasps, all_confs, all_widths
             )
@@ -194,7 +203,7 @@ class GraspPredictor:
             print(f"{ex}")
             return None, None, None
 
-    def filter_grasps(self, grasps, confs, widths):
+    def filter_grasps(self, grasps, confs, widths, do_top_k=True):
         """
         Initial filtering of grasps based on confidence_threshold
 
@@ -202,6 +211,7 @@ class GraspPredictor:
             grasps (torch.Tensor): (N, 4, 4) grasp pose tensor
             confs (torch.Tensor): (N, 1) confs tensor
             widths (torch.Tensor): (N, 1) widths tensor
+            do_top_k (bool): Whether to run a top-k filter or return all grasps
 
         Returns:
             grasps, confs, widths: Filtered grasps, confs, widths
@@ -215,29 +225,32 @@ class GraspPredictor:
         if grasps.shape[0] == 0 or confs.shape[0] == 0:
             return None, None, None
 
-        # top-k selection
-        vals, top_idcs = torch.topk(
-            confs.squeeze(),
-            k=min(100 * self.top_k, confs.squeeze().numel()),
-            sorted=True,
-        )
-        grasps = grasps[top_idcs]
-        confs = confs[top_idcs]
-        widths = widths[top_idcs]
+        if not do_top_k:
+            return grasps, confs, widths
+        else:
+            # top-k selection
+            _, top_idcs = torch.topk(
+                confs.squeeze(),
+                k=min(100 * self.top_k, confs.squeeze().numel()),
+                sorted=True,
+            )
+            grasps = grasps[top_idcs]
+            confs = confs[top_idcs]
+            widths = widths[top_idcs]
 
-        if grasps.shape[0] == 0:
-            return None, None, None
+            if grasps.shape[0] == 0:
+                return None, None, None
 
-        # furthest point sampling by position
-        pos = grasps[:, :3, 3]
-        _, selected_idcs = sample_farthest_points(pos.unsqueeze(0), K=self.top_k)
-        selected_idcs = selected_idcs.squeeze()
+            # furthest point sampling by position
+            pos = grasps[:, :3, 3]
+            _, selected_idcs = sample_farthest_points(pos.unsqueeze(0), K=self.top_k)
+            selected_idcs = selected_idcs.squeeze()
 
-        grasps = grasps[selected_idcs]
-        confs = confs[selected_idcs]
-        widths = widths[selected_idcs]
+            grasps = grasps[selected_idcs]
+            confs = confs[selected_idcs]
+            widths = widths[selected_idcs]
 
-        return grasps, confs, widths
+            return grasps, confs, widths
 
     def ensure_grasp_y_axis_upward(self, grasps: torch.Tensor) -> torch.Tensor:
         """
@@ -357,6 +370,19 @@ class GraspPredictor:
             widths (torch.Tensor):
 
         """
+        full_poses = grasps.cpu().numpy()
+        poses = full_poses[:, :3, 3]
+        # z_hat = full_poses[:, :3, 2]
+        # offset_poses = poses - z_hat * self.offset_distance
+        t0 = time.time()
+        test_grasp = PyGrasps(
+            poses=grasps.cpu().numpy(),
+            confs=confs.cpu().numpy(),
+            widths=widths.cpu().numpy(),
+        )
+        t1 = time.time()
+        print(f"grasp gen {1000*(t1 - t0):.3f}ms")
+
         quats = (
             rotation_matrix_to_quaternion(
                 grasps[:, :3, :3].contiguous(), order=QuaternionCoeffOrder.XYZW
@@ -365,7 +391,6 @@ class GraspPredictor:
             .numpy()
         )
         positions = grasps[:, :3, 3].cpu().numpy()
-
         pygrasp_list = []
 
         for quat, pos, conf, width in zip(
@@ -374,6 +399,12 @@ class GraspPredictor:
             pose = PyPose(position=pos, orientation=quat)
             offset_pose = self.get_orbital_pose(pose)
             pygrasp_list.append(PyGrasp(pose, offset_pose, conf, width))
+        t3 = time.time()
+
+        poses = [
+            PyPose(position=pos, orientation=quat)
+            for quat, pos in zip(quats, positions)
+        ]
 
         return PyGrasps(grasps=pygrasp_list)
 

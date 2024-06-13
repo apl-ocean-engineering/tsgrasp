@@ -42,6 +42,18 @@ class PyGrasp:
 @dataclass
 class PyGrasps:
     """
+    Dataclass containing 4x4 poses,
+    confs and widths of grasp data
+    """
+
+    poses: np.array
+    confs: np.array
+    widths: np.array
+
+
+@dataclass
+class PyGrasps_old:
+    """
     Dataclass version of a raven_manip_msgs Grasps
     """
 
