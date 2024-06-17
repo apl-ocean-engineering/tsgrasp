@@ -13,7 +13,7 @@ but seems to increase memory usage and can result in OOM errors.
 # Standard Library
 import os
 import warnings
-from typing import List, Optional, Tuple
+from typing import Optional, Tuple
 
 import numpy as np
 import torch
@@ -74,6 +74,7 @@ class GraspPredictor:
         self.downsample = 0.50
         self.queue_len = 1
         self.top_k = 500
+        self.downsample_grasps = True
         self.outlier_threshold = 0.00005
         self.pts_per_frame = 45000
         self.verbose = verbose
@@ -89,6 +90,8 @@ class GraspPredictor:
             self.downsample = model_metadata["downsample"]
             self.queue_len = model_metadata["queue_len"]
             self.top_k = model_metadata["top_k"]
+            self.downsample_grasps = model_metadata["downsample_grasps"]
+
             self.outlier_threshold = model_metadata["outlier_threshold"]
             self.pts_per_frame = model_metadata["pts_per_frame"]
             model_cfg = OmegaConf.create(model_metadata["model"]["model_cfg"])
@@ -143,17 +146,20 @@ class GraspPredictor:
 
         all_grasps, all_confs, all_widths = self.identify_grasps(pts)
 
-        grasps, confs, widths = self.filter_grasps(all_grasps, all_confs, all_widths)
-
-        if grasps is None:
-            if self.verbose:
-                print("No points found after filter_grasps!")
-            return (None, None)
-
         try:
-            grasps = self.ensure_grasp_y_axis_upward(grasps)
-            grasps = self.transform_to_eq_pose(grasps)
-            grasps_data = self.generate_grasps(grasps, confs, widths)
+            all_grasps = self.ensure_grasp_y_axis_upward(all_grasps)
+            all_grasps = self.transform_to_eq_pose(all_grasps)
+
+            filtered_grasps, filtered_confs, filtered_widths = self.filter_grasps(
+                all_grasps, all_confs, all_widths
+            )
+            if filtered_grasps is None:
+                if self.verbose:
+                    print("No points found after filter_grasps!")
+                return (None, None)
+            grasps_data = self.generate_grasps(
+                filtered_grasps, filtered_confs, filtered_widths
+            )
             pc_confidence_data = self.generate_pc_data(
                 pts, all_grasps, all_confs, all_widths
             )
@@ -206,6 +212,7 @@ class GraspPredictor:
         Returns:
             grasps, confs, widths: Filtered grasps, confs, widths
         """
+
         # confidence thresholding
         idcs = confs.squeeze() > self.confidence_threshold
         grasps = grasps[idcs]
@@ -215,27 +222,28 @@ class GraspPredictor:
         if grasps.shape[0] == 0 or confs.shape[0] == 0:
             return None, None, None
 
-        # top-k selection
-        vals, top_idcs = torch.topk(
-            confs.squeeze(),
-            k=min(100 * self.top_k, confs.squeeze().numel()),
-            sorted=True,
-        )
-        grasps = grasps[top_idcs]
-        confs = confs[top_idcs]
-        widths = widths[top_idcs]
+        if self.downsample_grasps:
+            # top-k selection
+            vals, top_idcs = torch.topk(
+                confs.squeeze(),
+                k=min(100 * self.top_k, confs.squeeze().numel()),
+                sorted=True,
+            )
+            grasps = grasps[top_idcs]
+            confs = confs[top_idcs]
+            widths = widths[top_idcs]
 
-        if grasps.shape[0] == 0:
-            return None, None, None
+            if grasps.shape[0] == 0:
+                return None, None, None
 
-        # furthest point sampling by position
-        pos = grasps[:, :3, 3]
-        _, selected_idcs = sample_farthest_points(pos.unsqueeze(0), K=self.top_k)
-        selected_idcs = selected_idcs.squeeze()
+            # furthest point sampling by position
+            pos = grasps[:, :3, 3]
+            _, selected_idcs = sample_farthest_points(pos.unsqueeze(0), K=self.top_k)
+            selected_idcs = selected_idcs.squeeze()
 
-        grasps = grasps[selected_idcs]
-        confs = confs[selected_idcs]
-        widths = widths[selected_idcs]
+            grasps = grasps[selected_idcs]
+            confs = confs[selected_idcs]
+            widths = widths[selected_idcs]
 
         return grasps, confs, widths
 
@@ -309,30 +317,9 @@ class GraspPredictor:
         ).to(poses.device)
         return poses @ tf
 
-    def get_orbital_poses(self, poses: List[PyPose]) -> List[PyPose]:
+    def get_offset_pose(self, pose: PyPose) -> PyPose:
         """
-        Generates a orbital pose from an offset.
-
-
-        Args:
-            poses (List[Pose]): Input grasps (poses)
-
-        Returns:
-            List[Pose]: Offset poses
-        """
-        orbital_poses = []
-        for pose in poses:
-            pos = np.array(pose.position)
-            rot_matrix = Rotation.from_quat(pose.orientation).as_matrix()
-            z_hat = rot_matrix[:, 2]
-            pos = pos - z_hat * self.offset_distance
-            o_pose = PyPose(position=pos, orientation=pose.orientation)
-            orbital_poses.append(o_pose)
-        return orbital_poses
-
-    def get_orbital_pose(self, pose: PyPose) -> PyPose:
-        """
-        Generates a single orbital pose from an input pose.
+        Generates a single offset pose from an input pose.
 
 
         Args:
@@ -365,14 +352,13 @@ class GraspPredictor:
             .numpy()
         )
         positions = grasps[:, :3, 3].cpu().numpy()
-
+        print("generate_grasps: ", quats[0])
         pygrasp_list = []
-
         for quat, pos, conf, width in zip(
             quats, positions, confs.tolist(), widths.tolist()
         ):
             pose = PyPose(position=pos, orientation=quat)
-            offset_pose = self.get_orbital_pose(pose)
+            offset_pose = self.get_offset_pose(pose)
             pygrasp_list.append(PyGrasp(pose, offset_pose, conf, width))
 
         return PyGrasps(grasps=pygrasp_list)
@@ -391,9 +377,9 @@ class GraspPredictor:
         cloud_points = pts[-1]
 
         skip_vals = int(1 / self.downsample)
-        confs_downsampled = all_confs[::skip_vals].cpu().numpy()
-        grasps_downsampled = all_grasps[::skip_vals, :, :].cpu().numpy()
-        widths_downsampled = all_widths[::skip_vals].cpu().numpy()
+        confs_downsampled = all_confs.cpu().numpy()
+        grasps_downsampled = all_grasps.cpu().numpy()
+        widths_downsampled = all_widths.cpu().numpy()
 
         int_confs = np.round(confs_downsampled * 255).astype(np.uint8).squeeze()
         points_downsampled = cloud_points[::skip_vals].cpu().numpy()
