@@ -352,7 +352,6 @@ class GraspPredictor:
             .numpy()
         )
         positions = grasps[:, :3, 3].cpu().numpy()
-        print("generate_grasps: ", quats[0])
         pygrasp_list = []
         for quat, pos, conf, width in zip(
             quats, positions, confs.tolist(), widths.tolist()
