@@ -33,12 +33,6 @@ model:
 # ROS Specific Parameters
 ckpt_path: src/grasp_synthesis/tsgrasp/models/tsgrasp_scene_1_frame/model.ckpt # relative to pkg_root
 pc_topic: /point_cloud_cropper/cropped_pc
-confidence_threshold: 0.0
-gripper_depth: 0.080
-offset_distance: 0.20
-downsample: 1.0
 queue_len: 1
-top_k: 50
-downsample_grasps: True
 outlier_threshold: 0.00005
 pts_per_frame: 45000

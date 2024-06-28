@@ -6,7 +6,6 @@ Author: Tim Player
 """
 
 # Standard library
-from dataclasses import dataclass
 from typing import List
 
 # Third-party
@@ -15,49 +14,6 @@ import numpy as np
 import torch
 import yaml
 from matplotlib import colormaps as cm
-
-
-@dataclass
-class PyPose:
-    """
-    Dataclass version of a ROS geometry_msgs/Pose
-    """
-
-    position: list
-    orientation: list
-
-
-@dataclass
-class PyGrasp:
-    """
-    Dataclass version of a raven_manip_msgs Grasp
-    """
-
-    pose: PyPose
-    offset_pose: PyPose
-    conf: float
-    width: float
-
-
-@dataclass
-class PyGrasps:
-    """
-    Dataclass version of a raven_manip_msgs Grasps
-    """
-
-    grasps: List[PyGrasp]
-
-    def __len__(self):
-        """
-        Returns the length of the data .
-        """
-        return len(self.grasps)
-
-    def __iter__(self):
-        """
-        Returns an iterator over the grasps list.
-        """
-        return iter(self.grasps)
 
 
 def generate_color_lookup(cm_str="magma") -> np.array:

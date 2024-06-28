@@ -19,20 +19,11 @@ import numpy as np
 import torch
 
 # Third-party
-from kornia.geometry.conversions import (
-    QuaternionCoeffOrder,
-    rotation_matrix_to_quaternion,
-)
 from omegaconf import OmegaConf
-from pytorch3d.ops import sample_farthest_points
-from scipy.spatial.transform import Rotation
 
 try:
     from .tsgrasp.net.lit_tsgraspnet import LitTSGraspNet
     from .tsgrasp_utils import (
-        PyGrasp,
-        PyGrasps,
-        PyPose,
         build_6dof_grasps,
         downsample_xyz,
         eul_to_rotm,
@@ -42,9 +33,6 @@ try:
 except ImportError:
     from tsgrasp.net.lit_tsgraspnet import LitTSGraspNet  # type: ignore
     from tsgrasp_utils import (  # type: ignore
-        PyGrasp,
-        PyGrasps,
-        PyPose,
         build_6dof_grasps,
         downsample_xyz,
         eul_to_rotm,
@@ -84,14 +72,7 @@ class GraspPredictor:
             assert os.path.isfile(model_path)
 
             # Other model params from YAML:
-            self.confidence_thresh = model_metadata["confidence_threshold"]
-            self.gripper_depth = model_metadata["gripper_depth"]
-            self.offset_distance = model_metadata["offset_distance"]
-            self.downsample = model_metadata["downsample"]
             self.queue_len = model_metadata["queue_len"]
-            self.top_k = model_metadata["top_k"]
-            self.downsample_grasps = model_metadata["downsample_grasps"]
-
             self.outlier_threshold = model_metadata["outlier_threshold"]
             self.pts_per_frame = model_metadata["pts_per_frame"]
             model_cfg = OmegaConf.create(model_metadata["model"]["model_cfg"])
@@ -103,6 +84,7 @@ class GraspPredictor:
         self.color_lookup = generate_color_lookup()
 
         self.pc_input_msg = None
+        self.py_grasps = None
         self.tf_trans = [0, 0, 0]
         self.tf_rot = [0, 0, np.pi / 2]
 
@@ -122,10 +104,11 @@ class GraspPredictor:
             pointcloud (np.array): input pointcloud
 
         Returns:
-            Tuple(PyGrasps, np.array): Tuple of PyGrasps and a heatmap pointcloud (np.array)
+            Tuple(np.array, np.array): Tuple of grasps pointcloud and a heatmap pointcloud (np.array)
         """
-        grasps_data: Optional[PyGrasps] = None
-        pc_confidence_data: Optional[np.array] = None
+
+        grasps_array: Optional[np.array] = None
+        cm_array: Optional[np.array] = None
 
         try:
             orig_pts = [pointcloud]
@@ -150,20 +133,11 @@ class GraspPredictor:
             all_grasps = self.ensure_grasp_y_axis_upward(all_grasps)
             all_grasps = self.transform_to_eq_pose(all_grasps)
 
-            filtered_grasps, filtered_confs, filtered_widths = self.filter_grasps(
-                all_grasps, all_confs, all_widths
-            )
-            if filtered_grasps is None:
-                if self.verbose:
-                    print("No points found after filter_grasps!")
-                return (None, None)
-            grasps_data = self.generate_grasps(
-                filtered_grasps, filtered_confs, filtered_widths
-            )
-            pc_confidence_data = self.generate_pc_data(
+            (grasps_array, cm_array) = self.generate_pc_data(
                 pts, all_grasps, all_confs, all_widths
             )
-            return grasps_data, pc_confidence_data
+
+            return (grasps_array, cm_array)
 
         except RuntimeError as ex:
             print(f"Encountered Runtime Error! {ex}")
@@ -199,53 +173,6 @@ class GraspPredictor:
         except Exception as ex:
             print(f"{ex}")
             return None, None, None
-
-    def filter_grasps(self, grasps, confs, widths):
-        """
-        Initial filtering of grasps based on confidence_threshold
-
-        Args:
-            grasps (torch.Tensor): (N, 4, 4) grasp pose tensor
-            confs (torch.Tensor): (N, 1) confs tensor
-            widths (torch.Tensor): (N, 1) widths tensor
-
-        Returns:
-            grasps, confs, widths: Filtered grasps, confs, widths
-        """
-
-        # confidence thresholding
-        idcs = confs.squeeze() > self.confidence_threshold
-        grasps = grasps[idcs]
-        confs = confs.squeeze()[idcs]
-        widths = widths.squeeze()[idcs]
-
-        if grasps.shape[0] == 0 or confs.shape[0] == 0:
-            return None, None, None
-
-        if self.downsample_grasps:
-            # top-k selection
-            vals, top_idcs = torch.topk(
-                confs.squeeze(),
-                k=min(100 * self.top_k, confs.squeeze().numel()),
-                sorted=True,
-            )
-            grasps = grasps[top_idcs]
-            confs = confs[top_idcs]
-            widths = widths[top_idcs]
-
-            if grasps.shape[0] == 0:
-                return None, None, None
-
-            # furthest point sampling by position
-            pos = grasps[:, :3, 3]
-            _, selected_idcs = sample_farthest_points(pos.unsqueeze(0), K=self.top_k)
-            selected_idcs = selected_idcs.squeeze()
-
-            grasps = grasps[selected_idcs]
-            confs = confs[selected_idcs]
-            widths = widths[selected_idcs]
-
-        return grasps, confs, widths
 
     def ensure_grasp_y_axis_upward(self, grasps: torch.Tensor) -> torch.Tensor:
         """
@@ -317,74 +244,33 @@ class GraspPredictor:
         ).to(poses.device)
         return poses @ tf
 
-    def get_offset_pose(self, pose: PyPose) -> PyPose:
-        """
-        Generates a single offset pose from an input pose.
-
-
-        Args:
-            poses (Pose): Input grasps (poses)
-
-        Returns:
-            Pose: Offset poses
-        """
-        pos = np.array(pose.position)
-        rot_matrix = Rotation.from_quat(pose.orientation).as_matrix()
-        z_hat = rot_matrix[:, 2]
-        pos = pos - z_hat * self.offset_distance
-        return PyPose(position=pos, orientation=pose.orientation)
-
-    def generate_grasps(self, grasps, confs, widths) -> PyGrasps:
-        """
-        Get grasps as dataclass
-
-        Args:
-            grasps (torch.Tensor):
-            confs (torch.Tensor):
-            widths (torch.Tensor):
-
-        """
-        quats = (
-            rotation_matrix_to_quaternion(
-                grasps[:, :3, :3].contiguous(), order=QuaternionCoeffOrder.XYZW
-            )
-            .cpu()
-            .numpy()
-        )
-        positions = grasps[:, :3, 3].cpu().numpy()
-        pygrasp_list = []
-        for quat, pos, conf, width in zip(
-            quats, positions, confs.tolist(), widths.tolist()
-        ):
-            pose = PyPose(position=pos, orientation=quat)
-            offset_pose = self.get_offset_pose(pose)
-            pygrasp_list.append(PyGrasp(pose, offset_pose, conf, width))
-
-        return PyGrasps(grasps=pygrasp_list)
-
-    def generate_pc_data(self, pts, all_grasps, all_confs, all_widths) -> np.array:
+    def generate_pc_data(
+        self, pts, all_grasps, all_confs, all_widths
+    ) -> Tuple[np.array, np.array]:
         """
         Returns point cloud of the grasps with confidences colormapped
-        Also includes all the grasps and widths.
+        Also includes pc with all the grasps and widths.
 
         Args:
             pts (torch.Tensor): x, y, z points
             all_grasps (torch.Tensor): 4x4 pose matrix for each grasp
             all_confs (torch.Tensor): Confidence float values for each grasp
             all_widths (torch.Tensor): Width float values for each grasp
+
+        Returns:
+            Tuple[np.array, np.array]: pointcloud containing grasp information, colormapped pc
         """
         cloud_points = pts[-1]
 
-        skip_vals = int(1 / self.downsample)
-        confs_downsampled = all_confs.cpu().numpy()
-        grasps_downsampled = all_grasps.cpu().numpy()
-        widths_downsampled = all_widths.cpu().numpy()
+        confs = all_confs.cpu().numpy()
+        widths = all_widths.cpu().numpy()
+        points = cloud_points.cpu().numpy()
+        npoints = len(points)
 
-        int_confs = np.round(confs_downsampled * 255).astype(np.uint8).squeeze()
-        points_downsampled = cloud_points[::skip_vals].cpu().numpy()
+        int_confs = np.round(confs * 255).astype(np.uint8).squeeze()
         colors = self.color_lookup[int_confs]
-        npoints = len(points_downsampled)
-        points_arr = np.zeros(
+
+        cm_array = np.zeros(
             (npoints,),
             dtype=[
                 ("x", np.float32),
@@ -394,19 +280,26 @@ class GraspPredictor:
                 ("g", np.float32),
                 ("b", np.float32),
                 ("a", np.float32),
-                ("confidence", np.float32),
+            ],
+        )
+        cm_array["x"] = points[:, 0]
+        cm_array["y"] = points[:, 1]
+        cm_array["z"] = points[:, 2]
+        cm_array["r"] = colors[:, 0]
+        cm_array["g"] = colors[:, 1]
+        cm_array["b"] = colors[:, 2]
+        cm_array["a"] = colors[:, 3]
+
+        grasps_array = np.zeros(
+            (npoints,),
+            dtype=[
                 ("grasps", np.float32, (4, 4)),
+                ("confidence", np.float32),
                 ("widths", np.float32),
             ],
         )
-        points_arr["x"] = points_downsampled[:, 0]
-        points_arr["y"] = points_downsampled[:, 1]
-        points_arr["z"] = points_downsampled[:, 2]
-        points_arr["r"] = colors[:, 0]
-        points_arr["g"] = colors[:, 1]
-        points_arr["b"] = colors[:, 2]
-        points_arr["a"] = colors[:, 3]
-        points_arr["confidence"] = confs_downsampled[:, 0]
-        points_arr["grasps"] = grasps_downsampled
-        points_arr["widths"] = widths_downsampled[:, 0]
-        return points_arr
+        grasps_array["grasps"] = all_grasps.cpu().numpy()
+        grasps_array["confidence"] = confs[:, 0]
+        grasps_array["widths"] = widths[:, 0]
+
+        return (grasps_array, cm_array)
