@@ -56,13 +56,8 @@ class GraspPredictor:
             print("No Metadata Loaded!")
 
         # Default params, if not in metadata
-        self.confidence_threshold = 0.0
         self.gripper_depth = 0.090
-        self.offset_distance = 0.20
-        self.downsample = 0.50
         self.queue_len = 1
-        self.top_k = 500
-        self.downsample_grasps = True
         self.outlier_threshold = 0.00005
         self.pts_per_frame = 45000
         self.verbose = verbose
