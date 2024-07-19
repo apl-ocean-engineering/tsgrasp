@@ -288,11 +288,17 @@ class GraspPredictor:
         grasps_array = np.zeros(
             (npoints,),
             dtype=[
+                ("x", np.float32),
+                ("y", np.float32),
+                ("z", np.float32),
                 ("grasps", np.float32, (4, 4)),
                 ("confidences", np.float32),
                 ("widths", np.float32),
             ],
         )
+        grasps_array["x"] = points[:, 0]
+        grasps_array["y"] = points[:, 1]
+        grasps_array["z"] = points[:, 2]
         grasps_array["grasps"] = all_grasps.cpu().numpy()
         grasps_array["confidences"] = confs[:, 0]
         grasps_array["widths"] = widths[:, 0]
